@@ -1,0 +1,17 @@
+# 依賴套件
+node_modules/
+
+# 環境變數檔
+.env
+
+# 日誌與暫存
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 作業系統暫存
+.DS_Store
+
+# IDE/Editor
+.vscode/
+.idea/
