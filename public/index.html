@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>Agar-Lite (Canvas 版)</title>
+  <style>
+    html, body { margin:0; padding:0; overflow:hidden; width:100%; height:100%; background:#fafafa; }
+    canvas { display:block; width:100%; height:100%; }
+  </style>
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+/* ───────── 參數 ───────────────────── */
+const GRID_SIZE = 100;
+const PLAYER_COLORS = { self: '#ff6666', other: '#66aaff' };
+
+/* ───────── 畫布 ───────────────────── */
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ───────── 網路 & 狀態 ───────────── */
+const socket  = io();
+let   players = {};
+let   myId    = null;
+
+socket.on('connect', () => { myId = socket.id; });
+socket.on('state',  data => { players = data; });
+
+/* ───────── 滑鼠向量計算 ───────────── */
+let mouseX = 0, mouseY = 0;
+window.addEventListener('mousemove', e => {
+  const cx = window.innerWidth  / 2;
+  const cy = window.innerHeight / 2;
+  mouseX = e.clientX - cx;
+  mouseY = e.clientY - cy;
+});
+
+/* ───────── 主繪製與發送迴圈 ───────── */
+function draw() {
+  const me = players[myId];
+  if (me) {
+    // 計算正規化方向向量 (dx, dy)
+    const dist = Math.hypot(mouseX, mouseY);
+    const dx = dist ? mouseX / dist : 0;
+    const dy = dist ? mouseY / dist : 0;
+    // 每幀發送方向，讓 server 持續移動
+    socket.emit('move', { dx, dy });
+  }
+
+  // 中心對齊偏移
+  const offsetX = me ? canvas.width  / 2 - me.x : 0;
+  const offsetY = me ? canvas.height / 2 - me.y : 0;
+
+  // 清空畫布
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 背景格線
+  ctx.strokeStyle = '#ddd';
+  ctx.lineWidth   = 1;
+  let startX = (offsetX % GRID_SIZE) - GRID_SIZE;
+  let startY = (offsetY % GRID_SIZE) - GRID_SIZE;
+  for (let x = startX; x < canvas.width; x += GRID_SIZE) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+  }
+  for (let y = startY; y < canvas.height; y += GRID_SIZE) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+  }
+
+  // 繪製所有玩家
+  for (const id in players) {
+    const p = players[id];
+    const sx = p.x + offsetX;
+    const sy = p.y + offsetY;
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.size, 0, Math.PI * 2);
+    ctx.fillStyle = id === myId ? PLAYER_COLORS.self : PLAYER_COLORS.other;
+    ctx.fill();
+  }
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
