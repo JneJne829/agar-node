@@ -28,7 +28,12 @@
 const GRID_SIZE      = 100;
 const PLAYER_COLORS  = { self: '#ff6666', other: '#66aaff' };
 const FEED_COLOR     = '#88cc88';
-const WORLD_SIZE     = 2000;
+const WORLD_SIZE     = 6000;       // 與伺服器一致
+const BASE_SCALE     = 2;          // 基準倍率
+const MIN_ZOOM       = 0.6;        // 視野最遠（越小越遠）
+const MAX_ZOOM       = 1.8;        // 視野最近（越大越近）
+let   zoom           = BASE_SCALE; // 當前平滑縮放值
+
 
 const canvas = document.getElementById('game');
 const ctx    = canvas.getContext('2d');
@@ -36,7 +41,7 @@ function resize() {
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-/* ───────── 滑鼠座標（螢幕絕對座標） ── */
+/* ───────── 滑鼠座標 (螢幕絕對座標) ───── */
 let mouseScreenX = 0, mouseScreenY = 0;
 window.addEventListener('mousemove', e => {
   mouseScreenX = e.clientX;
@@ -50,6 +55,7 @@ const socket  = io();
 let   players = {};
 let   feeds   = [];
 let   myId    = null;
+const smoothSize = new Map();
 
 socket.on('connect', () => { myId = socket.id; });
 socket.on('state', data => {
@@ -70,61 +76,95 @@ window.addEventListener('mousemove', e => {
 function draw() {
   const me = players[myId];
 
-  /* ---- 計算鏡頭偏移量 (ox, oy) ---- */
-  let ox = me ? canvas.width  / 2 - me.x : 0;
-  let oy = me ? canvas.height / 2 - me.y : 0;
-
-  // 將鏡頭限制在世界邊界內
-  const halfWorld = WORLD_SIZE / 2;
-  const minOx = canvas.width  - halfWorld;
-  const maxOx = halfWorld;
-  const minOy = canvas.height - halfWorld;
-  const maxOy = halfWorld;
-  ox = Math.min(maxOx, Math.max(minOx, ox));
-  oy = Math.min(maxOy, Math.max(minOy, oy));
-
-  /* ---- 根據玩家在螢幕上的實際位置計算方向向量 ---- */
+  /* ── 1. 根據玩家大小計算平滑縮放 ── */
   if (me) {
-    const playerScreenX = me.x + ox;
-    const playerScreenY = me.y + oy;
-    const relX = mouseScreenX - playerScreenX;
-    const relY = mouseScreenY - playerScreenY;
+    // 採用平方根函式，放大變得更「緩」，避免一下子縮太遠
+    const targetScale = BASE_SCALE * Math.sqrt(20 / me.size);
+    // 夾在可接受範圍
+    const clamped     = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, targetScale));
+    zoom += (clamped - zoom) * 0.08;          // 緩動 8%
+  }
+
+  /* ── 2. 計算攝影機中心 (camX, camY) 並夾在世界邊界 ── */
+  let camX = 0, camY = 0;
+  if (me) {
+    const halfWorld = WORLD_SIZE / 2;
+    const viewHalfW = canvas.width  / (2 * zoom);
+    const viewHalfH = canvas.height / (2 * zoom);
+
+    // 若螢幕視口比世界還大，就直接置中
+    if (viewHalfW >= halfWorld) camX = 0;
+    else {
+      camX = Math.min(halfWorld - viewHalfW,
+             Math.max(-halfWorld + viewHalfW, me.x));
+    }
+
+    if (viewHalfH >= halfWorld) camY = 0;
+    else {
+      camY = Math.min(halfWorld - viewHalfH,
+             Math.max(-halfWorld + viewHalfH, me.y));
+    }
+  }
+
+  /* ── 3. 依縮放與攝影機變換 Canvas ── */
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-camX, -camY);
+
+  /* ── 4. 背景格線 ── */
+  ctx.strokeStyle = '#444';
+  ctx.lineWidth   = 1 / zoom;              // 線寬需隨縮放調整
+  const startGridX = Math.floor((-WORLD_SIZE / 2) / GRID_SIZE) * GRID_SIZE;
+  const endGridX   =  Math.ceil(( WORLD_SIZE / 2) / GRID_SIZE) * GRID_SIZE;
+  const startGridY = Math.floor((-WORLD_SIZE / 2) / GRID_SIZE) * GRID_SIZE;
+  const endGridY   =  Math.ceil(( WORLD_SIZE / 2) / GRID_SIZE) * GRID_SIZE;
+
+  for (let x = startGridX; x <= endGridX; x += GRID_SIZE) {
+    ctx.beginPath(); ctx.moveTo(x, -WORLD_SIZE/2); ctx.lineTo(x, WORLD_SIZE/2); ctx.stroke();
+  }
+  for (let y = startGridY; y <= endGridY; y += GRID_SIZE) {
+    ctx.beginPath(); ctx.moveTo(-WORLD_SIZE/2, y); ctx.lineTo(WORLD_SIZE/2, y); ctx.stroke();
+  }
+
+  /* ── 5. 繪製 feeds ── */
+  feeds.forEach(f => {
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+    ctx.fillStyle = FEED_COLOR;
+    ctx.fill();
+  });
+
+  /* ── 6. 繪製玩家 (含平滑尺寸) ── */
+  for (const id in players) {
+    const p = players[id];
+    // 若尚無記錄，初始化
+    if (!smoothSize.has(id)) smoothSize.set(id, p.size);
+
+    // 每幀以 10% 緩動逼近真實大小
+    const prev = smoothSize.get(id);
+    const next = prev + (p.size - prev) * 0.025;
+    smoothSize.set(id, next);
+
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, next, 0, Math.PI * 2);
+    ctx.fillStyle = id === myId ? PLAYER_COLORS.self : PLAYER_COLORS.other;
+    ctx.fill();
+  }
+
+  ctx.restore();
+
+  /* ── 7. 計算並送出移動向量 (以世界座標) ── */
+  if (me) {
+    const worldMouseX = camX + (mouseScreenX - canvas.width  / 2) / zoom;
+    const worldMouseY = camY + (mouseScreenY - canvas.height / 2) / zoom;
+    const relX = worldMouseX - me.x;
+    const relY = worldMouseY - me.y;
     const dist = Math.hypot(relX, relY);
     const dx   = dist ? relX / dist : 0;
     const dy   = dist ? relY / dist : 0;
     socket.emit('move', { dx, dy });
-  }
-
-  /* ---- 以下繪製程式全部改用 (ox, oy) ---- */
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // 背景格線
-  ctx.strokeStyle = '#444';
-  ctx.lineWidth   = 1;
-  let startX = (ox % GRID_SIZE) - GRID_SIZE;
-  let startY = (oy % GRID_SIZE) - GRID_SIZE;
-  for (let x = startX; x < canvas.width; x += GRID_SIZE) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-  }
-  for (let y = startY; y < canvas.height; y += GRID_SIZE) {
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-  }
-
-  // Feed
-  for (const f of feeds) {
-    ctx.beginPath();
-    ctx.arc(f.x + ox, f.y + oy, f.size, 0, Math.PI * 2);
-    ctx.fillStyle = FEED_COLOR;
-    ctx.fill();
-  }
-
-  // Players
-  for (const id in players) {
-    const p = players[id];
-    ctx.beginPath();
-    ctx.arc(p.x + ox, p.y + oy, p.size, 0, Math.PI * 2);
-    ctx.fillStyle = id === myId ? PLAYER_COLORS.self : PLAYER_COLORS.other;
-    ctx.fill();
   }
 
   requestAnimationFrame(draw);
