@@ -12,18 +12,37 @@
 ### 修復
 - 
 
+
+## [0.2.0] – 2025-06-11
+### 新增
+- **Feed 系統**：啟動時全圖隨機生成既定數量的 feed，之後以固定速度持續補充  
+- **Spatial Grid**：以一致性網格加速玩家與 feed 的碰撞偵測  
+- **地圖邊界限制**  
+  - 伺服器端：玩家座標被限制在世界邊界內  
+  - 前端鏡頭：攝影機不再超出地圖，可視範圍始終落在邊界之內  
+- **深色 UI**：前端畫面改為暗黑配色  
+- **模組化後端結構**：新增 `config/`, `models/`, `logic/`, `network/` 等目錄，將伺服器程式碼拆分為獨立模組
+
+### 變更
+- `gameLoop.js` 重新實作補 feed 邏輯：改為固定速率補充並套用世界邊界隨機座標  
+- 前端方向向量計算改以「玩家實際螢幕座標」為基準
+
+### 修復
+- 過度快速生成 feed 的問題  
+- 玩家可移動至世界邊界外、鏡頭滑出地圖的問題
+
+
 ## [0.1.0] – 2025-06-11
 ### 新增
-- 初始專案結構：
-  - `server.js`：Express 與 Socket.io 伺服器邏輯，120 FPS 更新率、玩家狀態管理
-  - `package.json`、`package-lock.json`：依賴管理（`express`、`socket.io`）
-  - `public/index.html`：Canvas 渲染與 Socket.io 客戶端實現即時細胞移動
-- 背景格線繪製
-- 滑鼠相對畫面中心計算正規化移動向量
-- 前端使用 `requestAnimationFrame` 進行渲染循環
+- 初始專案結構  
+  - `server.js`：Express + Socket.io 伺服器（120 FPS 更新）  
+  - `package.json`, `package-lock.json`：依賴管理  
+  - `public/index.html`：Canvas + Socket.io 客戶端  
+- 背景格線與滑鼠向量移動  
+- 前端 `requestAnimationFrame` 渲染循環
 
 ### 變更
 - 無
 
 ### 修復
-- 修正細胞到達目標後停頓問題
+- 細胞到達目標後停頓問題
