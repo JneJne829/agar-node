@@ -1,8 +1,9 @@
+<!-- public/index.html -->
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <title>Agar‑Lite – Merge Enabled</title>
+  <title>Agar-Lite</title>
   <style>
     html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:#111;}
     canvas{display:block;width:100%;height:100%;background:#111;}
@@ -12,37 +13,34 @@
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ───────── 常數 ───────── */
-const GRID_SIZE       = 100;
-const WORLD_SIZE      = 6000;
-const BASE_SCALE      = 2;
-const MIN_ZOOM        = 0.6;
-const MAX_ZOOM        = 1.8;
-const FADE_DURATION   = 200;        // ms
-
-const PLAYER_COLORS = { self:'#ff6666', other:'#66aaff' };
-const FEED_COLOR    = '#88cc88';
+/* ───────── 畫面常數 ───────── */
+const GRID_SIZE     = 100;
+const WORLD_SIZE    = 6000;
+const BASE_SCALE    = 2;
+const MIN_ZOOM      = 0.6;
+const MAX_ZOOM      = 1.8;
+const FADE_DURATION = 200;   // ms
 
 /* Canvas */
-const cv = document.getElementById('game');
+const cv  = document.getElementById('game');
 const ctx = cv.getContext('2d');
 function resize(){cv.width=innerWidth;cv.height=innerHeight;}
 window.addEventListener('resize',resize);resize();
 
-/* 滑鼠螢幕座標 */
+/* 滑鼠座標 */
 let mouseX=0, mouseY=0;
 window.addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
 
-/* ───────── 網路狀態 ───────── */
+/* ───────── Socket 狀態 ───────── */
 const socket = io();
-let players = {};
-let feeds   = new Map();
-let myId    = null;
+let players  = {};
+let feeds    = new Map();
+let myId     = null;
 
-/* 半徑 & 動畫緩存 */
-const smoothR = new Map();              // id -> radius
-const lastPos = new Map();              // id -> {x,y}
-const fading  = new Map();              // id -> {x,y,r,timeLeft}
+/* 動畫緩存 */
+const smoothR  = new Map(); // cellId -> radius
+const lastInfo = new Map(); // cellId -> {x,y,color}
+const fading   = new Map(); // cellId -> {x,y,r,color,time}
 
 socket.on('init',d=>{
   players=d.players;
@@ -55,125 +53,109 @@ socket.on('update',d=>{
   for(const id of d.feedsRemoved) feeds.delete(id);
 });
 
-/* 工具 */
-const cellsOf=pl=>pl?pl.cells:[];
-const largest=pl=>{
-  let best=null; for(const c of cellsOf(pl)) if(!best||c.size>best.size) best=c;
-  return best;
-};
-
-/* Space 瞬間分裂 */
+/* Space = 分裂 */
 window.addEventListener('keydown',e=>{
   if(e.code==='Space'){
     const me=players[myId]; if(!me) return;
-    const lc=largest(me);
-    const wx=camX+(mouseX-cv.width/2)/zoom;
+    const wx=camX+(mouseX-cv.width /2)/zoom;
     const wy=camY+(mouseY-cv.height/2)/zoom;
-    socket.emit('split',{dx:wx-lc.x,dy:wy-lc.y});
+    socket.emit('split',{tx:wx,ty:wy});
   }
 });
 
-/* 主迴圈 */
-let camX=0, camY=0, zoom=BASE_SCALE, prevTime=performance.now();
+/* ───────── 主迴圈 ───────── */
+let camX=0, camY=0, zoom=BASE_SCALE, prev=performance.now();
 function frame(now){
-  const dt=now-prevTime; prevTime=now;
+  const dt=now-prev; prev=now;
   const me=players[myId];
 
-  /* 1. Camera Center & Zoom */
+  /* 1. 鏡頭位置與縮放 */
   if(me){
     let sumA=0,cx=0,cy=0;
-    for(const c of cellsOf(me)){ const a=c.size*c.size; sumA+=a; cx+=c.x*a; cy+=c.y*a; }
-    if(sumA){ camX=cx/sumA; camY=cy/sumA; }
-    /* clamp */
-    const viewW=cv.width /(2*zoom);
-    const viewH=cv.height/(2*zoom);
+    for(const c of me.cells){const a=c.size*c.size; sumA+=a; cx+=c.x*a; cy+=c.y*a;}
+    if(sumA){camX=cx/sumA;camY=cy/sumA;}
     const half=WORLD_SIZE/2;
+    const viewW=cv.width /(2*zoom), viewH=cv.height/(2*zoom);
     camX=Math.min(half-viewW,Math.max(-half+viewW,camX));
     camY=Math.min(half-viewH,Math.max(-half+viewH,camY));
 
-    /* zoom */
-    const rEff=Math.sqrt(sumA);
-    const tZoom=BASE_SCALE*Math.sqrt(20/rEff);
-    zoom += (Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,tZoom))-zoom)*0.08;
+    const targetZ=BASE_SCALE*Math.sqrt(20/Math.sqrt(sumA));
+    zoom+= (Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,targetZ))-zoom)*0.08;
   }
 
-  /* 2. 發送目標 */
+  /* 2. 傳送目標 */
   if(me){
     const wx=camX+(mouseX-cv.width /2)/zoom;
     const wy=camY+(mouseY-cv.height/2)/zoom;
     socket.emit('moveTo',{mx:wx,my:wy});
   }
 
-  /* 3. 畫布變換 */
+  /* 3. Canvas 轉換 */
   ctx.clearRect(0,0,cv.width,cv.height);
   ctx.save();
   ctx.translate(cv.width/2,cv.height/2);
   ctx.scale(zoom,zoom);
   ctx.translate(-camX,-camY);
 
-  /* 4. 格線 */
+  /* 4. 背景格線 */
   ctx.strokeStyle='#444'; ctx.lineWidth=1/zoom;
-  const sX=Math.floor((-WORLD_SIZE/2)/GRID_SIZE)*GRID_SIZE;
-  const eX=Math.ceil(( WORLD_SIZE/2)/GRID_SIZE)*GRID_SIZE;
-  for(let x=sX;x<=eX;x+=GRID_SIZE){ ctx.beginPath(); ctx.moveTo(x,-WORLD_SIZE/2); ctx.lineTo(x,WORLD_SIZE/2); ctx.stroke(); }
-  const sY=Math.floor((-WORLD_SIZE/2)/GRID_SIZE)*GRID_SIZE;
-  const eY=Math.ceil(( WORLD_SIZE/2)/GRID_SIZE)*GRID_SIZE;
-  for(let y=sY;y<=eY;y+=GRID_SIZE){ ctx.beginPath(); ctx.moveTo(-WORLD_SIZE/2,y); ctx.lineTo(WORLD_SIZE/2,y); ctx.stroke(); }
+  for(let x=-WORLD_SIZE/2; x<=WORLD_SIZE/2; x+=GRID_SIZE){
+    ctx.beginPath(); ctx.moveTo(x,-WORLD_SIZE/2); ctx.lineTo(x,WORLD_SIZE/2); ctx.stroke();
+  }
+  for(let y=-WORLD_SIZE/2; y<=WORLD_SIZE/2; y+=GRID_SIZE){
+    ctx.beginPath(); ctx.moveTo(-WORLD_SIZE/2,y); ctx.lineTo(WORLD_SIZE/2,y); ctx.stroke();
+  }
 
-  /* 5. Feed (裁切) */
+  /* 5. Feed */
   if(me){
     const pad=100;
-    const minX=camX-(cv.width /2+pad)/zoom;
-    const maxX=camX+(cv.width /2+pad)/zoom;
-    const minY=camY-(cv.height/2+pad)/zoom;
-    const maxY=camY+(cv.height/2+pad)/zoom;
+    const minX=camX-(cv.width /2+pad)/zoom, maxX=camX+(cv.width /2+pad)/zoom;
+    const minY=camY-(cv.height/2+pad)/zoom, maxY=camY+(cv.height/2+pad)/zoom;
     for(const f of feeds.values()){
       if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY) continue;
       ctx.beginPath(); ctx.arc(f.x,f.y,f.size,0,Math.PI*2);
-      ctx.fillStyle=FEED_COLOR; ctx.fill();
+      ctx.fillStyle=f.color||'#88cc88'; ctx.fill();
     }
   }
 
-  /* 6. 玩家細胞 + 緩動 */
-  const present=new Set();
+  /* 6. 玩家細胞 (小→大) */
+  const allCells=[];
   for(const pid in players){
-    const pl=players[pid];
-    const col=pid===myId?PLAYER_COLORS.self:PLAYER_COLORS.other;
-    for(const c of pl.cells){
-      /* 緩動半徑 */
-      if(!smoothR.has(c.id)) smoothR.set(c.id,c.size);
-      const sr=smoothR.get(c.id)+(c.size-smoothR.get(c.id))*0.05;
-      smoothR.set(c.id,sr);
+    const col=players[pid].color||'#ffffff';
+    for(const c of players[pid].cells) allCells.push({c,col});
+  }
+  allCells.sort((a,b)=>a.c.size-b.c.size);
 
-      /* 更新位置緩存 */
-      lastPos.set(c.id,{x:c.x,y:c.y});
+  const present=new Set();
+  for(const {c,col} of allCells){
+    if(!smoothR.has(c.id)) smoothR.set(c.id,c.size);
+    const sr=smoothR.get(c.id)+(c.size-smoothR.get(c.id))*0.05;
+    smoothR.set(c.id,sr);
 
-      ctx.beginPath(); ctx.arc(c.x,c.y,sr,0,Math.PI*2);
-      ctx.fillStyle=col; ctx.fill();
+    lastInfo.set(c.id,{x:c.x,y:c.y,color:col});
 
-      present.add(c.id);
-    }
+    ctx.beginPath(); ctx.arc(c.x,c.y,sr,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.fill();
+
+    present.add(c.id);
   }
 
-  /* 7. 處理消失→淡出動畫 */
+  /* 7. 淡出 */
   for(const id of smoothR.keys()){
     if(present.has(id)) continue;
-    /* 新增至 fading (若尚未) */
     if(!fading.has(id)){
-      const pos=lastPos.get(id)||{x:camX,y:camY};
-      fading.set(id,{x:pos.x,y:pos.y,r:smoothR.get(id),timeLeft:FADE_DURATION});
-      smoothR.delete(id);
-      lastPos.delete(id);
+      const info=lastInfo.get(id)||{x:camX,y:camY,color:'#ffffff'};
+      fading.set(id,{x:info.x,y:info.y,r:smoothR.get(id),color:info.color,time:FADE_DURATION});
+      smoothR.delete(id); lastInfo.delete(id);
     }
   }
-
-  for(const [id,obj] of fading){
-    obj.timeLeft-=dt;
-    if(obj.timeLeft<=0){ fading.delete(id); continue; }
-    const alpha=obj.timeLeft/FADE_DURATION;
+  for(const [id,o] of fading){
+    o.time-=dt;
+    if(o.time<=0){fading.delete(id);continue;}
+    const alpha=o.time/FADE_DURATION;
     ctx.globalAlpha=alpha;
-    ctx.beginPath(); ctx.arc(obj.x,obj.y,obj.r*alpha,0,Math.PI*2);
-    ctx.fillStyle=PLAYER_COLORS.self; ctx.fill();
+    ctx.beginPath(); ctx.arc(o.x,o.y,o.r*alpha,0,Math.PI*2);
+    ctx.fillStyle=o.color; ctx.fill();
     ctx.globalAlpha=1;
   }
 
