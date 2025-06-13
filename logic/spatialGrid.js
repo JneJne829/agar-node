@@ -1,52 +1,61 @@
+// logic/spatialGrid.js
 /**
- * 空間網格 (Spatial Grid) 用於加速碰撞檢測
- * 將所有 feed 分配到格子裡，再只檢索鄰近格子的 feed 做精確檢測
+ * 固定大小的空間哈希格 (Spatial Hash Grid)
+ * - cellSize 固定，**不會因玩家變大而重建**。
+ * - 使用 Map<string, Set<Feed>>，插入/移除 O(1)。
  */
 class SpatialGrid {
   /**
-   * @param {number} cellSize 每格邊長，建議設定為最大碰撞距離 (player.size + feed.size) 的兩倍
+   * @param {number} cellSize 每格邊長
    */
   constructor(cellSize) {
     this.cellSize = cellSize;
-    this.cells = new Map();          // key: "i,j" (格子座標), value: Array of feed
+    this.cells    = new Map();       // key: "i,j"  value: Set<Feed>
   }
 
-  _key(x, y) {
-    const i = Math.floor(x / this.cellSize);
-    const j = Math.floor(y / this.cellSize);
+  _indices(x, y) {
+    return [
+      Math.floor(x / this.cellSize),
+      Math.floor(y / this.cellSize)
+    ];
+  }
+
+  _key(i, j) {
     return `${i},${j}`;
-  }
-
-  /** 清空所有格子 */
-  clear() {
-    this.cells.clear();
   }
 
   /** 插入 feed */
   insert(feed) {
-    const key = this._key(feed.x, feed.y);
-    if (!this.cells.has(key)) this.cells.set(key, []);
-    this.cells.get(key).push(feed);
+    const [i, j] = this._indices(feed.x, feed.y);
+    const key = this._key(i, j);
+    if (!this.cells.has(key)) this.cells.set(key, new Set());
+    this.cells.get(key).add(feed);
   }
 
-  /** 🔸 新增：從格子中移除 feed（被吃掉時呼叫） */
+  /** 從格子中移除 feed */
   remove(feed) {
-    const key = this._key(feed.x, feed.y);
-    if (!this.cells.has(key)) return;
+    const [i, j] = this._indices(feed.x, feed.y);
+    const key = this._key(i, j);
     const bucket = this.cells.get(key);
-    const idx = bucket.indexOf(feed);
-    if (idx >= 0) bucket.splice(idx, 1);
+    if (bucket) bucket.delete(feed);
   }
 
-  /** 取回 (x,y) 周圍 3×3 格內的 feed */
-  queryNearby(x, y) {
-    const ci = Math.floor(x / this.cellSize);
-    const cj = Math.floor(y / this.cellSize);
+  /**
+   * 取得 (x,y) 半徑 radius 內可能碰撞的 feed
+   * @returns {Feed[]}
+   */
+  queryRange(x, y, radius) {
+    const minI = Math.floor((x - radius) / this.cellSize);
+    const maxI = Math.floor((x + radius) / this.cellSize);
+    const minJ = Math.floor((y - radius) / this.cellSize);
+    const maxJ = Math.floor((y + radius) / this.cellSize);
+
     const result = [];
-    for (let di = -1; di <= 1; di++) {
-      for (let dj = -1; dj <= 1; dj++) {
-        const key = `${ci + di},${cj + dj}`;
-        if (this.cells.has(key)) result.push(...this.cells.get(key));
+    for (let i = minI; i <= maxI; i++) {
+      for (let j = minJ; j <= maxJ; j++) {
+        const key = this._key(i, j);
+        const bucket = this.cells.get(key);
+        if (bucket) result.push(...bucket);
       }
     }
     return result;

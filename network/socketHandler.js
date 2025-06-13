@@ -2,14 +2,12 @@
 const Player = require('../models/Player');
 
 /**
- * 建立 Socket.io 事件處理
  * @param {import('socket.io').Server} io
- * @param {Object.<string, Player>} players
- * @param {Array} feeds
+ * @param {Object.<string, Player>}    players
+ * @param {Map<number, import('../models/Feed')>} feeds
  */
 function setupSockets(io, players, feeds) {
   io.on('connection', socket => {
-    // 建立新玩家
     const p = new Player(
       socket.id,
       Math.random() * 800 - 400,
@@ -17,18 +15,41 @@ function setupSockets(io, players, feeds) {
     );
     players[socket.id] = p;
 
-    // 傳送初始狀態
-    socket.emit('state', { players, feeds });
-
-    // 更新玩家方向
-    socket.on('move', ({ dx, dy }) => {
-      p.dirX = dx;
-      p.dirY = dy;
+    /* 初始狀態 */
+    socket.emit('init', {
+      players: Object.fromEntries(
+        Object.entries(players).map(([id, pl]) => [
+          id,
+          {
+            id: pl.id,
+            cells: pl.cells.map(c => ({
+              id: c.id,
+              x:  c.x,
+              y:  c.y,
+              size: c.size
+            }))
+          }
+        ])
+      ),
+      feeds: Array.from(feeds.values())
     });
 
-    socket.on('disconnect', () => {
-      delete players[socket.id];
+    /* 20 ms 節流目標更新 */
+    let last = 0;
+    socket.on('moveTo', ({ mx, my }) => {
+      const now = Date.now();
+      if (now - last < 20) return;
+      last = now;
+      p.setTarget(mx, my);
     });
+
+    /* 分裂 */
+    socket.on('split', ({ dx, dy }) => {
+      p.split(dx, dy);
+    });
+
+    /* 斷線 */
+    socket.on('disconnect', () => { delete players[socket.id]; });
   });
 }
 

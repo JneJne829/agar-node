@@ -1,68 +1,94 @@
-const { TICK_RATE, SPEED, FEED_COUNT } = require('../config');
-const config            = require('../config');
-const { playerEatsFeed} = require('./collision');
-const SpatialGrid       = require('./spatialGrid');
+// logic/gameLoop.js
+const {
+  TICK_RATE,
+  SPEED,
+  FEED_COUNT,
+  FEED_SIZE,
+  WORLD_SIZE,
+  GRID_CELL_SIZE
+} = require('../config');
 
-const SPAWN_PER_TICK = 1;   // 固定每 tick 最多補 1 顆 feed
+const { cellEatsFeed } = require('./collision');
+const SpatialGrid      = require('./spatialGrid');
+
+const SPAWN_PER_TICK = 1;
+const MS_PER_TICK    = 1000 / TICK_RATE;
+
+/* ----------- 序列化 ----------- */
+function serializePlayers(players) {
+  const out = {};
+  for (const [id, p] of Object.entries(players)) {
+    out[id] = {
+      id: p.id,
+      cells: p.cells.map(c => ({
+        id:   c.id,
+        x:    c.x,
+        y:    c.y,
+        size: c.size
+      }))
+    };
+  }
+  return out;
+}
 
 function startGameLoop(io, players, feeds, FeedClass) {
+  const grid = new SpatialGrid(GRID_CELL_SIZE);
+  for (const f of feeds.values()) grid.insert(f);
 
-  /* ---------- 建立一次網格並插入現有 feed ---------- */
-  const initMaxRadius = Object.values(players)
-    .reduce((m, p) => Math.max(m, p.size), 20);
-  let cellSize  = (initMaxRadius + config.FEED_SIZE) * 2;
-  let grid      = new SpatialGrid(cellSize);
-  feeds.forEach(f => grid.insert(f));
-
+  let last = Date.now();
   setInterval(() => {
-    /* 1. 玩家移動 + 邊界限制 */
-    Object.values(players).forEach(p => {
-      if (p.dirX || p.dirY) p.move(SPEED);
-      const half = config.WORLD_SIZE / 2;
-      const r    = p.size;
-      p.x = Math.min(half - r, Math.max(-half + r, p.x));
-      p.y = Math.min(half - r, Math.max(-half + r, p.y));
-    });
-
-    /* 2. 如玩家變得更大 → 放大格子並重新索引 feed */
-    const maxPlayerRadius = Object.values(players)
-      .reduce((m, p) => Math.max(m, p.size), 20);
-    const neededSize = (maxPlayerRadius + config.FEED_SIZE) * 2;
-
-    if (neededSize > cellSize) {
-      cellSize = neededSize;
-      grid     = new SpatialGrid(cellSize);
-      feeds.forEach(f => grid.insert(f));   // 重建一次索引
+    const now = Date.now();
+    let lag   = now - last;
+    while (lag >= MS_PER_TICK) {
+      step();
+      lag  -= MS_PER_TICK;
+      last += MS_PER_TICK;
     }
+  }, MS_PER_TICK / 2);
 
-    /* 3. 玩家吃 feed（增量移除） */
-    Object.values(players).forEach(p => {
-      const near = grid.queryNearby(p.x, p.y);
-      for (const f of near) {
-        if (playerEatsFeed(p, f)) {
-          p.grow();
-          grid.remove(f);                   // 從格子移除
-          const idx = feeds.indexOf(f);     // 從主陣列移除
-          if (idx >= 0) feeds.splice(idx, 1);
+  /* 單步邏輯 ------------------------------------------------ */
+  function step() {
+    const removed = [];
+    const added   = [];
+
+    /* 1. 玩家更新（傳入 Δt ms） */
+    for (const p of Object.values(players)) p.update(SPEED, MS_PER_TICK);
+
+    /* 2. 吃 feed */
+    for (const p of Object.values(players)) {
+      for (const c of p.cells) {
+        const near = grid.queryRange(c.x, c.y, c.size + FEED_SIZE);
+        for (const f of near) {
+          if (cellEatsFeed(c, f)) {
+            p.grow(c);
+            grid.remove(f);
+            feeds.delete(f.id);
+            removed.push(f.id);
+          }
         }
       }
-    });
+    }
 
-    /* 4. 固定速率補 feed（增量插入） */
-    if (feeds.length < FEED_COUNT) {
-      const spawnCount = Math.min(SPAWN_PER_TICK, FEED_COUNT - feeds.length);
-      for (let i = 0; i < spawnCount; i++) {
+    /* 3. 補 feed */
+    if (feeds.size < FEED_COUNT) {
+      const spawn = Math.min(SPAWN_PER_TICK, FEED_COUNT - feeds.size);
+      for (let i = 0; i < spawn; i++) {
         const f = new FeedClass();
-        f.x = (Math.random() - 0.5) * config.WORLD_SIZE;
-        f.y = (Math.random() - 0.5) * config.WORLD_SIZE;
-        feeds.push(f);
-        grid.insert(f);                     // 新 feed 直接插入格子
+        f.x = (Math.random() - 0.5) * WORLD_SIZE;
+        f.y = (Math.random() - 0.5) * WORLD_SIZE;
+        feeds.set(f.id, f);
+        grid.insert(f);
+        added.push(f);
       }
     }
 
-    /* 5. 廣播最新狀態 */
-    io.emit('state', { players, feeds });
-  }, 1000 / TICK_RATE);
+    /* 4. 廣播 */
+    io.emit('update', {
+      players: serializePlayers(players),
+      feedsAdded:   added,
+      feedsRemoved: removed
+    });
+  }
 }
 
 module.exports = startGameLoop;
