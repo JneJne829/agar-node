@@ -1,6 +1,7 @@
 // models/Player.js
 /**
  * 玩家資料與行為
+ * - 每位玩家可自訂 name / color
  * - 投餵球顏色與玩家一致 (`popEjectedFeeds`)
  * - grow() 依據「實際被吃 feed 半徑」增加面積
  */
@@ -19,7 +20,8 @@ const {
   EJECT_SPEED,
   EJECT_OFFSET,
   DECAY_RATE,
-  MIN_CELL_SIZE
+  MIN_CELL_SIZE,
+  DEFAULT_PLAYER_NAME
 } = require('../config');
 
 let nextCellId = 1;
@@ -40,8 +42,24 @@ class Cell {
 
 /* ───── Player ───── */
 class Player {
-  constructor(id, x, y, size = BASE_CELL_SIZE, color = '#ffffff') {
+  /**
+   * @param {string}  id     socket.id
+   * @param {number}  x      初始 x
+   * @param {number}  y      初始 y
+   * @param {number=} size   初始半徑
+   * @param {string=} color  六碼 HEX
+   * @param {string=} name   玩家名稱
+   */
+  constructor(
+    id,
+    x,
+    y,
+    size  = BASE_CELL_SIZE,
+    color = '#ffffff',
+    name = DEFAULT_PLAYER_NAME
+  ) {
     this.id      = id;
+    this.name    = name;
     this.color   = color;
     this.cells   = [new Cell(x, y, size)];
     this.targetX = x;
@@ -49,9 +67,17 @@ class Player {
     this._ejectQ = [];           // 投餵佇列
   }
 
+  /* ---------- 基本操作 ---------- */
   setTarget(x, y) {
     this.targetX = x;
     this.targetY = y;
+  }
+
+  setProfile({ name, color }) {
+    if (typeof name === 'string')
+      this.name = name.trim() || DEFAULT_PLAYER_NAME;
+    if (typeof color === 'string' && color.startsWith('#') && color.length === 7)
+      this.color = color;
   }
 
   /* ---------- 投餵請求 (socketHandler) ---------- */
@@ -125,15 +151,12 @@ class Player {
     this._merge();
   }
 
-  /** 吃到 feed 時增加面積
-   *  @param {Cell}  c          被增大的細胞
-   *  @param {number} feedSize  feed 半徑
-   */
+  /** 吃到 feed 時增加面積 */
   grow(c, feedSize = FEED_SIZE) {
     c.size = Math.sqrt(c.area + feedSize * feedSize);
   }
 
-  /** 分裂 (Space) */
+  /* ---------- 分裂 (Space) ---------- */
   split(tx, ty) {
     if (this.cells.length >= MAX_CELLS) return;
 
@@ -183,7 +206,7 @@ class Player {
         f.y     = c.y + uy * (c.size + f.size + EJECT_OFFSET);
         f.vx    = ux * EJECT_SPEED;
         f.vy    = uy * EJECT_SPEED;
-        f.color = this.color;          // ← 與玩家同色
+        f.color = this.color;          // 與玩家同色
         feeds.push(f);
 
         /* 扣除質量 */

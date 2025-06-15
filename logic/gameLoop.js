@@ -47,7 +47,8 @@ function serializePlayers(players) {
   const o = {};
   for (const [id, p] of Object.entries(players)) {
     o[id] = {
-      id: p.id,
+      id   : p.id,
+      name : p.name,
       color: p.color,
       cells: p.cells.map((c) => ({ id: c.id, x: c.x, y: c.y, size: c.size }))
     };

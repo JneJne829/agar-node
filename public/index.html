@@ -52,7 +52,7 @@
     <input id="playerName" type="text" maxlength="20" placeholder="Your name">
 
     <div>
-      <div style="margin-bottom:4px;font-size:14px;">Cell Color</div>
+      <div style="margin-bottom:4px;font-size:14px;">Cell Color (optional)</div>
       <div id="palette" class="palette"></div>
     </div>
 
@@ -76,20 +76,21 @@ const DEFAULT_COLORS=[
 ];
 const settings={
   darkMode:true,showGrid:true,showName:true,showMass:true,
-  playerName:'Anon',playerColor:DEFAULT_COLORS[0]
+  playerName:'',playerColor:null   // ← 不預設顏色
 };
 /* palette UI */
 const palEl=document.getElementById('palette');
+let selectedSwatch=null;
 DEFAULT_COLORS.forEach(col=>{
   const d=document.createElement('div');
   d.className='swatch';d.style.background=col;
   d.onclick=()=>selectColor(col,d);palEl.appendChild(d);
 });
-selectColor(settings.playerColor,palEl.firstChild);
 function selectColor(c,el){
   settings.playerColor=c;
   document.querySelectorAll('.swatch').forEach(e=>e.classList.remove('selected'));
   el.classList.add('selected');
+  selectedSwatch=el;
 }
 
 /* ============================================================================
@@ -101,7 +102,7 @@ const inpName=document.getElementById('playerName');
   document.getElementById(`chk${k}`).onchange=e=>settings[`show${k}`]=e.target.checked;
 });
 btnPlay.onclick=()=>{
-  settings.playerName=inpName.value.trim()||'Anon';
+  settings.playerName=inpName.value.trim();  // 空字串代表未輸入
   menu.style.display='none';
   startGame();
 };
@@ -117,16 +118,26 @@ function resize(){cv.width=innerWidth;cv.height=innerHeight;}resize();addEventLi
 /* mouse */
 let mouseX=0,mouseY=0;addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
 /* socket */
-const socket=io();let players={},feeds=new Map(),myId=null,nick={};
+const socket=io();let players={},feeds=new Map(),myId=null;
+socket.on('connect',()=>{
+  /* 送出名稱 / 顏色（顏色可選擇性） */
+  const payload={name:settings.playerName};
+  if(settings.playerColor)payload.color=settings.playerColor;
+  socket.emit('setProfile',payload);
+});
 socket.on('init',d=>{
   players=d.players;feeds=new Map(d.feeds.map(f=>[f.id,f]));myId=socket.id;
-  nick[myId]=settings.playerName;if(players[myId])players[myId].color=settings.playerColor;
-  socket.emit('setProfile',{name:settings.playerName,color:settings.playerColor});
 });
 socket.on('update',d=>{
-  players=d.players;if(players[myId])players[myId].color=settings.playerColor;
+  players=d.players;
   d.feedsAdded.forEach(f=>feeds.set(f.id,f));d.feedsRemoved.forEach(id=>feeds.delete(id));
   d.feedsMoved&&d.feedsMoved.forEach(f=>{const l=feeds.get(f.id);l?Object.assign(l,f):feeds.set(f.id,f);});
+});
+socket.on('profileUpdated', ({ id, name, color }) => {
+  if (players[id]) {
+    players[id].name  = name;
+    players[id].color = color;
+  }
 });
 /* controls */
 addEventListener('keydown',e=>{
@@ -170,17 +181,17 @@ requestAnimationFrame(function loop(now){
       ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);ctx.fillStyle=f.color||'#88cc88';ctx.fill();});
   }
   /* cells */
-  const cells=[];for(const pid in players){const p=players[pid];if(!nick[pid])nick[pid]=pid.slice(0,4);
-    p.cells.forEach(c=>cells.push({c,pid,color:p.color}));}
+  const cells=[];for(const pid in players){const p=players[pid];
+    p.cells.forEach(c=>cells.push({c,p}));}
   cells.sort((a,b)=>a.c.size-b.c.size);
   const present=new Set();
-  cells.forEach(({c,pid,color})=>{
+  cells.forEach(({c,p})=>{
     /* 半徑緩動 */
     const rPrev=smoothR.get(c.id)||c.size,r=rPrev+(c.size-rPrev)*0.05;
-    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,color});present.add(c.id);
+    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,color:p.color});present.add(c.id);
 
     /* 細胞圓 */
-    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();
 
     /* 文字顏色 */
     ctx.fillStyle=settings.darkMode?'#eee':'#222';ctx.textAlign='center';ctx.textBaseline='alphabetic';
@@ -191,19 +202,19 @@ requestAnimationFrame(function loop(now){
     const gap=2/zoom;                      // 微調間距
 
     /* 計算總高度後垂直置中 */
-    const totalH=fs/zoom + (settings.showMass? (gap + ms/zoom):0);
+    const totalH=(settings.showName?fs/zoom:0) + (settings.showMass? (gap + ms/zoom):0);
     let nameY=c.y - totalH/2 + fs/zoom;
 
     /* 名稱 */
     if(settings.showName){
       ctx.font=`${fs/zoom}px Arial`;
-      ctx.fillText(nick[pid],c.x,nameY);
+      ctx.fillText(p.name,c.x,nameY);
     }
 
     /* 質量 */
     if(settings.showMass){
       ctx.font=`${ms/zoom}px Arial`;
-      const massY=nameY + gap + ms/zoom;
+      const massY=nameY + (settings.showName? (gap + ms/zoom):0);
       ctx.fillText(Math.floor(c.size*c.size),c.x,massY);
     }
   });

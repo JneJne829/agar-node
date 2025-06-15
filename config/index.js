@@ -49,5 +49,8 @@ module.exports = {
   DECAY_RATE: 0.002,       // 每秒流失 0.2 % 質量
 
   /* ───── 其他 ───── */
-  MIN_CELL_SIZE: 10        // 最小半徑（避免負值）
+  MIN_CELL_SIZE: 10,        // 最小半徑（避免負值）
+
+  /* ───── 名稱設定 ───── */
+  DEFAULT_PLAYER_NAME: 'An unnamed cell'
 };

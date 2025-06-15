@@ -6,7 +6,9 @@ const config  = require('../config');
 function randomColor() {
   const pool = config.PLAYER_COLOR_POOL;
   if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
-  return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+  return (
+    '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0')
+  );
 }
 
 /**
@@ -16,23 +18,25 @@ function randomColor() {
  */
 function setupSockets(io, players, feeds) {
   io.on('connection', socket => {
-    /* 建立玩家 */
+    /* 建立玩家（預設隨機色與匿名名稱） */
     const p = new Player(
       socket.id,
       Math.random() * 800 - 400,
       Math.random() * 800 - 400,
       undefined,
-      randomColor()
+      randomColor(),
+      config.DEFAULT_PLAYER_NAME
     );
     players[socket.id] = p;
 
-    /* 初始化 */
+    /* 傳給新連線者的初始資料 */
     socket.emit('init', {
       players: Object.fromEntries(
         Object.entries(players).map(([id, pl]) => [
           id,
           {
-            id: pl.id,
+            id   : pl.id,
+            name : pl.name,
             color: pl.color,
             cells: pl.cells.map(c => ({ id: c.id, x: c.x, y: c.y, size: c.size }))
           }
@@ -41,7 +45,7 @@ function setupSockets(io, players, feeds) {
       feeds: Array.from(feeds.values())
     });
 
-    /* 目標 (20 ms 節流) */
+    /* 取得滑鼠目標 (20 ms 節流) */
     let last = 0;
     socket.on('moveTo', ({ mx, my }) => {
       const now = Date.now();
@@ -55,6 +59,18 @@ function setupSockets(io, players, feeds) {
 
     /* 投餵 (W) */
     socket.on('eject', ({ tx, ty }) => p.requestEject(tx, ty));
+
+    /* 更新個人名稱 / 顏色 */
+    socket.on('setProfile', ({ name, color }) => {
+      p.setProfile({ name, color });
+
+      /* 立即同步名稱 / 顏色，免等下一個 update tick */
+      io.emit('profileUpdated', {
+        id: p.id,
+        name: p.name,
+        color: p.color
+      });
+    });
 
     /* 斷線清理 */
     socket.on('disconnect', () => delete players[socket.id]);
