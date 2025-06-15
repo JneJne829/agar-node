@@ -2,10 +2,10 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>Agar-Lite</title>
   <style>
-    html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:#111;}
+    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#111;}
     canvas{display:block;width:100%;height:100%;background:#111;}
   </style>
   <script src="/socket.io/socket.io.js"></script>
@@ -13,154 +13,143 @@
 <body>
 <canvas id="game"></canvas>
 <script>
-/* ───────── 畫面常數 ───────── */
-const GRID_SIZE     = 100;
-const WORLD_SIZE    = 6000;
-const BASE_SCALE    = 2;
-const MIN_ZOOM      = 0.6;
-const MAX_ZOOM      = 1.8;
-const FADE_DURATION = 200;   // ms
+/* ───── 畫面常數 ───── */
+const GRID_SIZE=100,WORLD_SIZE=6000,BASE_SCALE=2,MIN_ZOOM=0.6,MAX_ZOOM=1.8,FADE=200;
 
 /* Canvas */
-const cv  = document.getElementById('game');
-const ctx = cv.getContext('2d');
-function resize(){cv.width=innerWidth;cv.height=innerHeight;}
-window.addEventListener('resize',resize);resize();
+const cv=document.getElementById('game'),ctx=cv.getContext('2d');
+function resize(){cv.width=innerWidth;cv.height=innerHeight;}resize();addEventListener('resize',resize);
 
-/* 滑鼠座標 */
-let mouseX=0, mouseY=0;
-window.addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
+/* 滑鼠 */
+let mouseX=0,mouseY=0;
+addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
 
-/* ───────── Socket 狀態 ───────── */
-const socket = io();
-let players  = {};
-let feeds    = new Map();
-let myId     = null;
+/* Socket */
+const socket=io();
+let players={},feeds=new Map(),myId=null;
 
-/* 動畫緩存 */
-const smoothR  = new Map(); // cellId -> radius
-const lastInfo = new Map(); // cellId -> {x,y,color}
-const fading   = new Map(); // cellId -> {x,y,r,color,time}
+/* 動畫暫存 */
+const smoothR=new Map(),lastInfo=new Map(),fading=new Map();
 
 socket.on('init',d=>{
   players=d.players;
-  feeds  = new Map(d.feeds.map(f=>[f.id,f]));
-  myId   = socket.id;
+  feeds=new Map(d.feeds.map(f=>[f.id,f]));
+  myId=socket.id;
 });
 socket.on('update',d=>{
   players=d.players;
-  for(const f of d.feedsAdded)    feeds.set(f.id,f);
-  for(const id of d.feedsRemoved) feeds.delete(id);
-});
 
-/* Space = 分裂 */
-window.addEventListener('keydown',e=>{
-  if(e.code==='Space'){
-    const me=players[myId]; if(!me) return;
-    const wx=camX+(mouseX-cv.width /2)/zoom;
-    const wy=camY+(mouseY-cv.height/2)/zoom;
-    socket.emit('split',{tx:wx,ty:wy});
+  /* 新增／移除 */
+  for(const f of d.feedsAdded)   feeds.set(f.id,f);
+  for(const id of d.feedsRemoved)feeds.delete(id);
+
+  /* 🔸 位置更新：只處理 server 端回傳的 moved 列表 */
+  if(d.feedsMoved){
+    for(const f of d.feedsMoved){
+      const ex=feeds.get(f.id);
+      if(ex){
+        ex.x=f.x;ex.y=f.y;ex.vx=f.vx;ex.vy=f.vy;
+      }else{
+        feeds.set(f.id,f);           // 萬一本地沒有就直接補
+      }
+    }
   }
 });
 
-/* ───────── 主迴圈 ───────── */
-let camX=0, camY=0, zoom=BASE_SCALE, prev=performance.now();
+/* --------- 操作 --------- */
+addEventListener('keydown',e=>{
+  const me=players[myId];
+  if(!me)return;
+  const wx=camX+(mouseX-cv.width/2)/zoom;
+  const wy=camY+(mouseY-cv.height/2)/zoom;
+  if(e.code==='Space') socket.emit('split',{tx:wx,ty:wy});
+  if(e.code==='KeyW')  socket.emit('eject',{tx:wx,ty:wy});
+});
+
+/* --------- 主迴圈 --------- */
+let camX=0,camY=0,zoom=BASE_SCALE,prev=performance.now();
 function frame(now){
-  const dt=now-prev; prev=now;
+  const dt=now-prev;prev=now;
   const me=players[myId];
 
-  /* 1. 鏡頭位置與縮放 */
+  /* 鏡頭 & 縮放 */
   if(me){
     let sumA=0,cx=0,cy=0;
-    for(const c of me.cells){const a=c.size*c.size; sumA+=a; cx+=c.x*a; cy+=c.y*a;}
+    for(const c of me.cells){const a=c.size*c.size;sumA+=a;cx+=c.x*a;cy+=c.y*a;}
     if(sumA){camX=cx/sumA;camY=cy/sumA;}
-    const half=WORLD_SIZE/2;
-    const viewW=cv.width /(2*zoom), viewH=cv.height/(2*zoom);
+    const half=WORLD_SIZE/2,viewW=cv.width/(2*zoom),viewH=cv.height/(2*zoom);
     camX=Math.min(half-viewW,Math.max(-half+viewW,camX));
     camY=Math.min(half-viewH,Math.max(-half+viewH,camY));
-
     const targetZ=BASE_SCALE*Math.sqrt(20/Math.sqrt(sumA));
-    zoom+= (Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,targetZ))-zoom)*0.08;
+    zoom+=(Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,targetZ))-zoom)*0.08;
   }
 
-  /* 2. 傳送目標 */
+  /* 傳送目標 */
   if(me){
-    const wx=camX+(mouseX-cv.width /2)/zoom;
-    const wy=camY+(mouseY-cv.height/2)/zoom;
-    socket.emit('moveTo',{mx:wx,my:wy});
+    socket.emit('moveTo',{
+      mx:camX+(mouseX-cv.width/2)/zoom,
+      my:camY+(mouseY-cv.height/2)/zoom
+    });
   }
 
-  /* 3. Canvas 轉換 */
+  /* 畫布轉換 */
   ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.save();
-  ctx.translate(cv.width/2,cv.height/2);
-  ctx.scale(zoom,zoom);
-  ctx.translate(-camX,-camY);
+  ctx.save();ctx.translate(cv.width/2,cv.height/2);ctx.scale(zoom,zoom);ctx.translate(-camX,-camY);
 
-  /* 4. 背景格線 */
-  ctx.strokeStyle='#444'; ctx.lineWidth=1/zoom;
-  for(let x=-WORLD_SIZE/2; x<=WORLD_SIZE/2; x+=GRID_SIZE){
-    ctx.beginPath(); ctx.moveTo(x,-WORLD_SIZE/2); ctx.lineTo(x,WORLD_SIZE/2); ctx.stroke();
+  /* 背景格線 */
+  ctx.strokeStyle='#444';ctx.lineWidth=1/zoom;
+  for(let x=-WORLD_SIZE/2;x<=WORLD_SIZE/2;x+=GRID_SIZE){
+    ctx.beginPath();ctx.moveTo(x,-WORLD_SIZE/2);ctx.lineTo(x,WORLD_SIZE/2);ctx.stroke();
   }
-  for(let y=-WORLD_SIZE/2; y<=WORLD_SIZE/2; y+=GRID_SIZE){
-    ctx.beginPath(); ctx.moveTo(-WORLD_SIZE/2,y); ctx.lineTo(WORLD_SIZE/2,y); ctx.stroke();
+  for(let y=-WORLD_SIZE/2;y<=WORLD_SIZE/2;y+=GRID_SIZE){
+    ctx.beginPath();ctx.moveTo(-WORLD_SIZE/2,y);ctx.lineTo(WORLD_SIZE/2,y);ctx.stroke();
   }
 
-  /* 5. Feed */
+  /* Feed */
   if(me){
-    const pad=100;
-    const minX=camX-(cv.width /2+pad)/zoom, maxX=camX+(cv.width /2+pad)/zoom;
-    const minY=camY-(cv.height/2+pad)/zoom, maxY=camY+(cv.height/2+pad)/zoom;
+    const pad=100,minX=camX-(cv.width/2+pad)/zoom,maxX=camX+(cv.width/2+pad)/zoom;
+    const minY=camY-(cv.height/2+pad)/zoom,maxY=camY+(cv.height/2+pad)/zoom;
     for(const f of feeds.values()){
-      if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY) continue;
-      ctx.beginPath(); ctx.arc(f.x,f.y,f.size,0,Math.PI*2);
-      ctx.fillStyle=f.color||'#88cc88'; ctx.fill();
+      if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY)continue;
+      ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);
+      ctx.fillStyle=f.color||'#88cc88';ctx.fill();
     }
   }
 
-  /* 6. 玩家細胞 (小→大) */
-  const allCells=[];
+  /* 玩家細胞 */
+  const all=[];
   for(const pid in players){
-    const col=players[pid].color||'#ffffff';
-    for(const c of players[pid].cells) allCells.push({c,col});
+    const col=players[pid].color||'#fff';
+    for(const c of players[pid].cells)all.push({c,col});
   }
-  allCells.sort((a,b)=>a.c.size-b.c.size);
-
+  all.sort((a,b)=>a.c.size-b.c.size);
   const present=new Set();
-  for(const {c,col} of allCells){
-    if(!smoothR.has(c.id)) smoothR.set(c.id,c.size);
-    const sr=smoothR.get(c.id)+(c.size-smoothR.get(c.id))*0.05;
-    smoothR.set(c.id,sr);
-
-    lastInfo.set(c.id,{x:c.x,y:c.y,color:col});
-
-    ctx.beginPath(); ctx.arc(c.x,c.y,sr,0,Math.PI*2);
-    ctx.fillStyle=col; ctx.fill();
-
-    present.add(c.id);
+  for(const {c,col} of all){
+    if(!smoothR.has(c.id))smoothR.set(c.id,c.size);
+    const r=smoothR.get(c.id)+(c.size-smoothR.get(c.id))*0.05;
+    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,col});
+    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);
+    ctx.fillStyle=col;ctx.fill();present.add(c.id);
   }
 
-  /* 7. 淡出 */
+  /* 淡出 */
   for(const id of smoothR.keys()){
-    if(present.has(id)) continue;
+    if(present.has(id))continue;
     if(!fading.has(id)){
-      const info=lastInfo.get(id)||{x:camX,y:camY,color:'#ffffff'};
-      fading.set(id,{x:info.x,y:info.y,r:smoothR.get(id),color:info.color,time:FADE_DURATION});
-      smoothR.delete(id); lastInfo.delete(id);
+      const info=lastInfo.get(id)||{x:camX,y:camY,col:'#fff'};
+      fading.set(id,{x:info.x,y:info.y,r:smoothR.get(id),col:info.col,t:FADE});
+      smoothR.delete(id);lastInfo.delete(id);
     }
   }
   for(const [id,o] of fading){
-    o.time-=dt;
-    if(o.time<=0){fading.delete(id);continue;}
-    const alpha=o.time/FADE_DURATION;
-    ctx.globalAlpha=alpha;
-    ctx.beginPath(); ctx.arc(o.x,o.y,o.r*alpha,0,Math.PI*2);
-    ctx.fillStyle=o.color; ctx.fill();
-    ctx.globalAlpha=1;
+    o.t-=dt;if(o.t<=0){fading.delete(id);continue;}
+    const a=o.t/FADE;
+    ctx.globalAlpha=a;
+    ctx.beginPath();ctx.arc(o.x,o.y,o.r*a,0,Math.PI*2);
+    ctx.fillStyle=o.col;ctx.fill();ctx.globalAlpha=1;
   }
 
-  ctx.restore();
-  requestAnimationFrame(frame);
+  ctx.restore();requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 </script>

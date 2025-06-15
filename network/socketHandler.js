@@ -2,50 +2,46 @@
 const Player  = require('../models/Player');
 const config  = require('../config');
 
-/** 隨機取一個玩家顏色 */
+/* 隨機顏色 */
 function randomColor() {
   const pool = config.PLAYER_COLOR_POOL;
-  if (Array.isArray(pool) && pool.length) {
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
+  if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
   return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
 }
 
 /**
  * @param {import('socket.io').Server} io
- * @param {Object.<string, Player>}    players
+ * @param {Object<string, Player>}     players
  * @param {Map<number, import('../models/Feed')>} feeds
  */
 function setupSockets(io, players, feeds) {
   io.on('connection', socket => {
-    /* ── 建立玩家 ── */
+    /* 建立玩家 */
     const p = new Player(
       socket.id,
       Math.random() * 800 - 400,
       Math.random() * 800 - 400,
-      undefined,          // size 使用預設
-      randomColor()       // 隨機顏色
+      undefined,
+      randomColor()
     );
     players[socket.id] = p;
 
-    /* 初始封包 */
+    /* 初始化 */
     socket.emit('init', {
       players: Object.fromEntries(
         Object.entries(players).map(([id, pl]) => [
           id,
           {
-            id:    pl.id,
+            id: pl.id,
             color: pl.color,
-            cells: pl.cells.map(c => ({
-              id: c.id, x: c.x, y: c.y, size: c.size
-            }))
+            cells: pl.cells.map(c => ({ id: c.id, x: c.x, y: c.y, size: c.size }))
           }
         ])
       ),
       feeds: Array.from(feeds.values())
     });
 
-    /* 目標移動 (20 ms 節流) */
+    /* 目標 (20 ms 節流) */
     let last = 0;
     socket.on('moveTo', ({ mx, my }) => {
       const now = Date.now();
@@ -55,10 +51,13 @@ function setupSockets(io, players, feeds) {
     });
 
     /* 分裂 */
-    socket.on('split', ({ tx, ty }) => { p.split(tx, ty); });
+    socket.on('split', ({ tx, ty }) => p.split(tx, ty));
 
-    /* 斷線 */
-    socket.on('disconnect', () => { delete players[socket.id]; });
+    /* 投餵 (W) */
+    socket.on('eject', ({ tx, ty }) => p.requestEject(tx, ty));
+
+    /* 斷線清理 */
+    socket.on('disconnect', () => delete players[socket.id]);
   });
 }
 

@@ -7,26 +7,23 @@ const {
 
 let nextId = 1;
 
-/** 由顏色池隨機取色；若池為空則產生隨機色 */
+/** 從池中隨機取色；若池為空則回傳隨機 HEX */
 function randomColor(pool) {
   if (Array.isArray(pool) && pool.length) {
     return pool[Math.floor(Math.random() * pool.length)];
   }
-  return (
-    '#' +
-    Math.floor(Math.random() * 0xffffff)
-      .toString(16)
-      .padStart(6, '0')
-  );
+  return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
 }
 
 class Feed {
   constructor() {
     this.id = nextId++;
     this.reset();
+    this.vx = 0;   // 🔸 投餵用動量；一般靜止 feed 皆為 0
+    this.vy = 0;
   }
 
-  /** 隨機定位 & 指定顏色 */
+  /** 隨機重置位置與顏色 */
   reset() {
     this.x     = Math.random() * WORLD_SIZE - WORLD_SIZE / 2;
     this.y     = Math.random() * WORLD_SIZE - WORLD_SIZE / 2;
