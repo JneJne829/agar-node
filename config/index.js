@@ -16,7 +16,7 @@ module.exports = {
   MIN_SPLIT_SIZE: 30,
   SPLIT_BOOST: 15,          // ← 可自由調整「分裂衝刺速度」
   MAX_CELLS: 16,
-  MERGE_COOLDOWN: 1.0,      // s（改為浮點秒數）
+  MERGE_COOLDOWN: 15.0,      // s（改為浮點秒數）
   MERGE_OVERLAP_RATIO: 0.7, // ≥ 50 % 面積可合併
 
   /* ───── 吞噬 ───── */

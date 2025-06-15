@@ -1,157 +1,230 @@
 <!-- public/index.html -->
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Agar-Lite</title>
   <style>
-    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#111;}
-    canvas{display:block;width:100%;height:100%;background:#111;}
+    :root{
+      --bg-dark:#111;
+      --panel-bg:#222;
+      --panel-border:#333;
+      --text-light:#eee;
+      --accent:#2196f3;
+    }
+    html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:var(--bg-dark);}
+    canvas{display:block;width:100%;height:100%;background:transparent;}
+
+    /* ====== Menu ====== */
+    .menu{position:absolute;inset:0;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(6px);}
+    .panel{
+      width:320px;padding:28px 32px;border-radius:12px;
+      background:var(--panel-bg);border:1px solid var(--panel-border);color:var(--text-light);
+      font-family:Arial,Helvetica,sans-serif;box-shadow:0 8px 20px rgba(0,0,0,.4);
+      display:flex;flex-direction:column;gap:14px;
+    }
+    .panel h1{margin:0;font-size:28px;text-align:center;}
+    .panel input[type=text]{
+      width:100%;padding:8px 10px;border-radius:6px;border:1px solid #555;
+      background:#1a1a1a;color:var(--text-light);font-size:15px;
+    }
+    .panel label{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;}
+    .panel input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;}
+    .palette{display:flex;flex-wrap:wrap;gap:8px;}
+    .swatch{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer;box-sizing:border-box;}
+    .swatch.selected{border-color:var(--accent);}
+    .panel button{
+      margin-top:6px;padding:10px 0;border:none;border-radius:8px;cursor:pointer;
+      background:var(--accent);color:#fff;font-size:16px;font-weight:bold;
+    }
+    .panel button:hover{background:#1e88e5;}
   </style>
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
 <canvas id="game"></canvas>
-<script>
-/* ───── 畫面常數 ───── */
-const GRID_SIZE=100,WORLD_SIZE=6000,BASE_SCALE=2,MIN_ZOOM=0.6,MAX_ZOOM=1.8,FADE=200;
 
-/* Canvas */
+<!-- ===== 入場選單 ===== -->
+<div id="menu" class="menu">
+  <div class="panel">
+    <h1>Agar-Lite</h1>
+
+    <input id="playerName" type="text" maxlength="20" placeholder="Your name">
+
+    <div>
+      <div style="margin-bottom:4px;font-size:14px;">Cell Color</div>
+      <div id="palette" class="palette"></div>
+    </div>
+
+    <label><input id="chkDark" type="checkbox" checked> Dark Mode</label>
+    <label><input id="chkGrid" type="checkbox" checked> Show Grid</label>
+    <label><input id="chkName" type="checkbox" checked> Show Name</label>
+    <label><input id="chkMass" type="checkbox" checked> Show Mass</label>
+
+    <button id="btnPlay">Play</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+ * 1. Settings & Palette
+ * ==========================================================================*/
+const DEFAULT_COLORS=[
+  '#f44336','#e91e63','#9c27b0','#673ab7','#3f51b5',
+  '#2196f3','#03a9f4','#00bcd4','#009688','#4caf50',
+  '#8bc34a','#cddc39','#ffc107','#ff9800','#ff5722'
+];
+const settings={
+  darkMode:true,showGrid:true,showName:true,showMass:true,
+  playerName:'Anon',playerColor:DEFAULT_COLORS[0]
+};
+/* palette UI */
+const palEl=document.getElementById('palette');
+DEFAULT_COLORS.forEach(col=>{
+  const d=document.createElement('div');
+  d.className='swatch';d.style.background=col;
+  d.onclick=()=>selectColor(col,d);palEl.appendChild(d);
+});
+selectColor(settings.playerColor,palEl.firstChild);
+function selectColor(c,el){
+  settings.playerColor=c;
+  document.querySelectorAll('.swatch').forEach(e=>e.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+/* ============================================================================
+ * 2. Menu Interaction
+ * ==========================================================================*/
+const menu=document.getElementById('menu'),btnPlay=document.getElementById('btnPlay');
+const inpName=document.getElementById('playerName');
+['Dark','Grid','Name','Mass'].forEach(k=>{
+  document.getElementById(`chk${k}`).onchange=e=>settings[`show${k}`]=e.target.checked;
+});
+btnPlay.onclick=()=>{
+  settings.playerName=inpName.value.trim()||'Anon';
+  menu.style.display='none';
+  startGame();
+};
+
+/* ============================================================================
+ * 3. Game
+ * ==========================================================================*/
+function startGame(){
+const GRID_SIZE=100,WORLD_SIZE=6000,BASE_SCALE=2,MIN_ZOOM=0.6,MAX_ZOOM=1.8,FADE=200;
+/* canvas */
 const cv=document.getElementById('game'),ctx=cv.getContext('2d');
 function resize(){cv.width=innerWidth;cv.height=innerHeight;}resize();addEventListener('resize',resize);
-
-/* 滑鼠 */
-let mouseX=0,mouseY=0;
-addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
-
-/* Socket */
-const socket=io();
-let players={},feeds=new Map(),myId=null;
-
-/* 動畫暫存 */
-const smoothR=new Map(),lastInfo=new Map(),fading=new Map();
-
+/* mouse */
+let mouseX=0,mouseY=0;addEventListener('mousemove',e=>{mouseX=e.clientX;mouseY=e.clientY;});
+/* socket */
+const socket=io();let players={},feeds=new Map(),myId=null,nick={};
 socket.on('init',d=>{
-  players=d.players;
-  feeds=new Map(d.feeds.map(f=>[f.id,f]));
-  myId=socket.id;
+  players=d.players;feeds=new Map(d.feeds.map(f=>[f.id,f]));myId=socket.id;
+  nick[myId]=settings.playerName;if(players[myId])players[myId].color=settings.playerColor;
+  socket.emit('setProfile',{name:settings.playerName,color:settings.playerColor});
 });
 socket.on('update',d=>{
-  players=d.players;
-
-  /* 新增／移除 */
-  for(const f of d.feedsAdded)   feeds.set(f.id,f);
-  for(const id of d.feedsRemoved)feeds.delete(id);
-
-  /* 🔸 位置更新：只處理 server 端回傳的 moved 列表 */
-  if(d.feedsMoved){
-    for(const f of d.feedsMoved){
-      const ex=feeds.get(f.id);
-      if(ex){
-        ex.x=f.x;ex.y=f.y;ex.vx=f.vx;ex.vy=f.vy;
-      }else{
-        feeds.set(f.id,f);           // 萬一本地沒有就直接補
-      }
-    }
-  }
+  players=d.players;if(players[myId])players[myId].color=settings.playerColor;
+  d.feedsAdded.forEach(f=>feeds.set(f.id,f));d.feedsRemoved.forEach(id=>feeds.delete(id));
+  d.feedsMoved&&d.feedsMoved.forEach(f=>{const l=feeds.get(f.id);l?Object.assign(l,f):feeds.set(f.id,f);});
 });
-
-/* --------- 操作 --------- */
+/* controls */
 addEventListener('keydown',e=>{
-  const me=players[myId];
-  if(!me)return;
-  const wx=camX+(mouseX-cv.width/2)/zoom;
-  const wy=camY+(mouseY-cv.height/2)/zoom;
-  if(e.code==='Space') socket.emit('split',{tx:wx,ty:wy});
-  if(e.code==='KeyW')  socket.emit('eject',{tx:wx,ty:wy});
+  if(!players[myId])return;
+  const wx=camX+(mouseX-cv.width/2)/zoom,wy=camY+(mouseY-cv.height/2)/zoom;
+  if(e.code==='Space')socket.emit('split',{tx:wx,ty:wy});
+  if(e.code==='KeyW') socket.emit('eject',{tx:wx,ty:wy});
 });
-
-/* --------- 主迴圈 --------- */
+/* animation buffers */
+const smoothR=new Map(),lastInfo=new Map(),fading=new Map();
+/* camera */
 let camX=0,camY=0,zoom=BASE_SCALE,prev=performance.now();
-function frame(now){
-  const dt=now-prev;prev=now;
-  const me=players[myId];
-
-  /* 鏡頭 & 縮放 */
+requestAnimationFrame(function loop(now){
+  const dt=now-prev;prev=now;const me=players[myId];
+  /* camera */
   if(me){
-    let sumA=0,cx=0,cy=0;
-    for(const c of me.cells){const a=c.size*c.size;sumA+=a;cx+=c.x*a;cy+=c.y*a;}
-    if(sumA){camX=cx/sumA;camY=cy/sumA;}
-    const half=WORLD_SIZE/2,viewW=cv.width/(2*zoom),viewH=cv.height/(2*zoom);
-    camX=Math.min(half-viewW,Math.max(-half+viewW,camX));
-    camY=Math.min(half-viewH,Math.max(-half+viewH,camY));
-    const targetZ=BASE_SCALE*Math.sqrt(20/Math.sqrt(sumA));
+    let area=0,cx=0,cy=0;
+    me.cells.forEach(c=>{const a=c.size*c.size;area+=a;cx+=c.x*a;cy+=c.y*a;});
+    if(area){camX=cx/area;camY=cy/area;}
+    const half=WORLD_SIZE/2,vw=cv.width/(2*zoom),vh=cv.height/(2*zoom);
+    camX=Math.min(half-vw,Math.max(-half+vw,camX));camY=Math.min(half-vh,Math.max(-half+vh,camY));
+    const targetZ=BASE_SCALE*Math.sqrt(20/Math.sqrt(area));
     zoom+=(Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,targetZ))-zoom)*0.08;
+    socket.emit('moveTo',{mx:camX+(mouseX-cv.width/2)/zoom,my:camY+(mouseY-cv.height/2)/zoom});
   }
-
-  /* 傳送目標 */
-  if(me){
-    socket.emit('moveTo',{
-      mx:camX+(mouseX-cv.width/2)/zoom,
-      my:camY+(mouseY-cv.height/2)/zoom
-    });
+  /* background */
+  ctx.fillStyle=settings.darkMode?'#111':'#fafafa';ctx.fillRect(0,0,cv.width,cv.height);
+  ctx.save();
+  ctx.translate(cv.width/2,cv.height/2);ctx.scale(zoom,zoom);ctx.translate(-camX,-camY);
+  /* grid */
+  if(settings.showGrid){
+    ctx.strokeStyle=settings.darkMode?'#444':'#ccc';ctx.lineWidth=1/zoom;
+    for(let x=-WORLD_SIZE/2;x<=WORLD_SIZE/2;x+=GRID_SIZE){ctx.beginPath();ctx.moveTo(x,-WORLD_SIZE/2);ctx.lineTo(x,WORLD_SIZE/2);ctx.stroke();}
+    for(let y=-WORLD_SIZE/2;y<=WORLD_SIZE/2;y+=GRID_SIZE){ctx.beginPath();ctx.moveTo(-WORLD_SIZE/2,y);ctx.lineTo(WORLD_SIZE/2,y);ctx.stroke();}
   }
-
-  /* 畫布轉換 */
-  ctx.clearRect(0,0,cv.width,cv.height);
-  ctx.save();ctx.translate(cv.width/2,cv.height/2);ctx.scale(zoom,zoom);ctx.translate(-camX,-camY);
-
-  /* 背景格線 */
-  ctx.strokeStyle='#444';ctx.lineWidth=1/zoom;
-  for(let x=-WORLD_SIZE/2;x<=WORLD_SIZE/2;x+=GRID_SIZE){
-    ctx.beginPath();ctx.moveTo(x,-WORLD_SIZE/2);ctx.lineTo(x,WORLD_SIZE/2);ctx.stroke();
-  }
-  for(let y=-WORLD_SIZE/2;y<=WORLD_SIZE/2;y+=GRID_SIZE){
-    ctx.beginPath();ctx.moveTo(-WORLD_SIZE/2,y);ctx.lineTo(WORLD_SIZE/2,y);ctx.stroke();
-  }
-
-  /* Feed */
+  /* feeds */
   if(me){
     const pad=100,minX=camX-(cv.width/2+pad)/zoom,maxX=camX+(cv.width/2+pad)/zoom;
     const minY=camY-(cv.height/2+pad)/zoom,maxY=camY+(cv.height/2+pad)/zoom;
-    for(const f of feeds.values()){
-      if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY)continue;
-      ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);
-      ctx.fillStyle=f.color||'#88cc88';ctx.fill();
-    }
+    feeds.forEach(f=>{if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY)return;
+      ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);ctx.fillStyle=f.color||'#88cc88';ctx.fill();});
   }
-
-  /* 玩家細胞 */
-  const all=[];
-  for(const pid in players){
-    const col=players[pid].color||'#fff';
-    for(const c of players[pid].cells)all.push({c,col});
-  }
-  all.sort((a,b)=>a.c.size-b.c.size);
+  /* cells */
+  const cells=[];for(const pid in players){const p=players[pid];if(!nick[pid])nick[pid]=pid.slice(0,4);
+    p.cells.forEach(c=>cells.push({c,pid,color:p.color}));}
+  cells.sort((a,b)=>a.c.size-b.c.size);
   const present=new Set();
-  for(const {c,col} of all){
-    if(!smoothR.has(c.id))smoothR.set(c.id,c.size);
-    const r=smoothR.get(c.id)+(c.size-smoothR.get(c.id))*0.05;
-    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,col});
-    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);
-    ctx.fillStyle=col;ctx.fill();present.add(c.id);
-  }
+  cells.forEach(({c,pid,color})=>{
+    /* 半徑緩動 */
+    const rPrev=smoothR.get(c.id)||c.size,r=rPrev+(c.size-rPrev)*0.05;
+    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,color});present.add(c.id);
 
-  /* 淡出 */
-  for(const id of smoothR.keys()){
-    if(present.has(id))continue;
-    if(!fading.has(id)){
-      const info=lastInfo.get(id)||{x:camX,y:camY,col:'#fff'};
-      fading.set(id,{x:info.x,y:info.y,r:smoothR.get(id),col:info.col,t:FADE});
-      smoothR.delete(id);lastInfo.delete(id);
+    /* 細胞圓 */
+    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+
+    /* 文字顏色 */
+    ctx.fillStyle=settings.darkMode?'#eee':'#222';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+
+    /* 動態字體大小 */
+    const fs=Math.min(r*0.6,24);           // name font-size
+    const ms=Math.min(r*0.5,20);           // mass font-size
+    const gap=2/zoom;                      // 微調間距
+
+    /* 計算總高度後垂直置中 */
+    const totalH=fs/zoom + (settings.showMass? (gap + ms/zoom):0);
+    let nameY=c.y - totalH/2 + fs/zoom;
+
+    /* 名稱 */
+    if(settings.showName){
+      ctx.font=`${fs/zoom}px Arial`;
+      ctx.fillText(nick[pid],c.x,nameY);
     }
-  }
-  for(const [id,o] of fading){
-    o.t-=dt;if(o.t<=0){fading.delete(id);continue;}
-    const a=o.t/FADE;
-    ctx.globalAlpha=a;
-    ctx.beginPath();ctx.arc(o.x,o.y,o.r*a,0,Math.PI*2);
-    ctx.fillStyle=o.col;ctx.fill();ctx.globalAlpha=1;
-  }
 
-  ctx.restore();requestAnimationFrame(frame);
+    /* 質量 */
+    if(settings.showMass){
+      ctx.font=`${ms/zoom}px Arial`;
+      const massY=nameY + gap + ms/zoom;
+      ctx.fillText(Math.floor(c.size*c.size),c.x,massY);
+    }
+  });
+  /* fading */
+  smoothR.forEach((_,id)=>{if(!present.has(id)&&!fading.has(id)){
+    const info=lastInfo.get(id);fading.set(id,{...info,r:smoothR.get(id),t:FADE});
+    smoothR.delete(id);lastInfo.delete(id);}});
+  fading.forEach((o,id)=>{o.t-=dt;if(o.t<=0){fading.delete(id);return;}
+    const a=o.t/FADE;ctx.globalAlpha=a;ctx.beginPath();ctx.arc(o.x,o.y,o.r*a,0,Math.PI*2);
+    ctx.fillStyle=o.color;ctx.fill();ctx.globalAlpha=1;});
+  ctx.restore();
+  /* score */
+  if(me){
+    let score=0;me.cells.forEach(c=>score+=c.size*c.size);
+    ctx.fillStyle=settings.darkMode?'#eee':'#222';ctx.font='16px Arial';
+    ctx.textAlign='left';ctx.textBaseline='bottom';
+    ctx.fillText(`Score : ${Math.floor(score)}`,12,cv.height-12);
+  }
+  requestAnimationFrame(loop);
+});
 }
-requestAnimationFrame(frame);
 </script>
 </body>
 </html>

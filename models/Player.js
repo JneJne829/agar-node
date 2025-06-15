@@ -1,4 +1,9 @@
 // models/Player.js
+/**
+ * 玩家資料與行為
+ * - 投餵球顏色與玩家一致 (`popEjectedFeeds`)
+ * - grow() 依據「實際被吃 feed 半徑」增加面積
+ */
 const {
   WORLD_SIZE,
   MIN_SPLIT_SIZE,
@@ -25,10 +30,10 @@ class Cell {
     this.id   = nextCellId++;
     this.x    = x;
     this.y    = y;
-    this.size = size;  // 半徑
+    this.size = size;      // 半徑
     this.vx   = 0;
     this.vy   = 0;
-    this.mergeClock = mergeClock;   // ms
+    this.mergeClock = mergeClock; // ms
   }
   get area() { return this.size * this.size; }
 }
@@ -36,22 +41,27 @@ class Cell {
 /* ───── Player ───── */
 class Player {
   constructor(id, x, y, size = BASE_CELL_SIZE, color = '#ffffff') {
-    this.id       = id;
-    this.color    = color;
-    this.cells    = [new Cell(x, y, size)];
-    this.targetX  = x;
-    this.targetY  = y;
-    this._ejectQ  = [];  // ← 投餵佇列
+    this.id      = id;
+    this.color   = color;
+    this.cells   = [new Cell(x, y, size)];
+    this.targetX = x;
+    this.targetY = y;
+    this._ejectQ = [];           // 投餵佇列
   }
 
-  setTarget(x, y) { this.targetX = x; this.targetY = y; }
+  setTarget(x, y) {
+    this.targetX = x;
+    this.targetY = y;
+  }
 
-  /* -------- 投餵請求 (由 socketHandler 呼叫) -------- */
-  requestEject(tx, ty) { this._ejectQ.push({ tx, ty }); }
+  /* ---------- 投餵請求 (socketHandler) ---------- */
+  requestEject(tx, ty) {
+    this._ejectQ.push({ tx, ty });
+  }
 
-  /* -------- 每 tick 更新 -------- */
+  /* ---------- 每 tick 更新 ---------- */
   update(baseSpeed, dtMs) {
-    /* A. 冷卻倒數 */
+    /* A. 分裂冷卻倒數 */
     for (const c of this.cells)
       if (c.mergeClock) c.mergeClock = Math.max(0, c.mergeClock - dtMs);
 
@@ -71,7 +81,8 @@ class Player {
       c.y += uy * speed + c.vy;
 
       /* 邊界 */
-      const half = WORLD_SIZE / 2, r = c.size;
+      const half = WORLD_SIZE / 2,
+            r    = c.size;
       c.x = Math.min(half - r, Math.max(-half + r, c.x));
       c.y = Math.min(half - r, Math.max(-half + r, c.y));
 
@@ -80,7 +91,7 @@ class Player {
       c.vy *= 0.9;
     }
 
-    /* C. 自然質量衰減 */
+    /* C. 自然衰減 */
     if (DECAY_RATE > 0) {
       const factor = 1 - DECAY_RATE * (dtMs / 1000);
       for (const c of this.cells) {
@@ -92,10 +103,12 @@ class Player {
     /* D. 冷卻期間互斥 */
     for (let i = 0; i < this.cells.length; i++) {
       for (let j = i + 1; j < this.cells.length; j++) {
-        const a = this.cells[i], b = this.cells[j];
+        const a = this.cells[i],
+              b = this.cells[j];
         if (!a.mergeClock && !b.mergeClock) continue;
 
-        const dx = b.x - a.x, dy = b.y - a.y;
+        const dx = b.x - a.x,
+              dy = b.y - a.y;
         const dist = Math.hypot(dx, dy) || 0.001;
         const minD = a.size + b.size;
         if (dist < minD) {
@@ -112,8 +125,13 @@ class Player {
     this._merge();
   }
 
-  /** 被 feed 吃到時成長 */
-  grow(c) { c.size = Math.sqrt(c.area + FEED_SIZE * FEED_SIZE); }
+  /** 吃到 feed 時增加面積
+   *  @param {Cell}  c          被增大的細胞
+   *  @param {number} feedSize  feed 半徑
+   */
+  grow(c, feedSize = FEED_SIZE) {
+    c.size = Math.sqrt(c.area + feedSize * feedSize);
+  }
 
   /** 分裂 (Space) */
   split(tx, ty) {
@@ -124,9 +142,11 @@ class Player {
       if (this.cells.length >= MAX_CELLS) break;
       if (c.size < MIN_SPLIT_SIZE) continue;
 
-      const dx = tx - c.x, dy = ty - c.y;
+      const dx  = tx - c.x,
+            dy  = ty - c.y;
       const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len, uy = dy / len;
+      const ux  = dx / len,
+            uy  = dy / len;
 
       const newR = c.size / Math.SQRT2;
       c.size       = newR;
@@ -139,7 +159,7 @@ class Player {
     }
   }
 
-  /* ---------- 將排隊的投餵請求轉成 Feed 物件 ---------- */
+  /* ---------- 將排隊的投餵請求轉成 Feed ---------- */
   popEjectedFeeds(FeedClass) {
     if (!this._ejectQ.length) return [];
 
@@ -147,41 +167,49 @@ class Player {
     while (this._ejectQ.length) {
       const { tx, ty } = this._ejectQ.shift();
       for (const c of this.cells) {
-        if (c.size <= EJECT_SIZE * 1.5) continue; // 避免太小還投餵
+        if (c.size <= EJECT_SIZE * 1.5) continue; // 太小不投餵
 
-        /* 方向 */
-        const dx = tx - c.x, dy = ty - c.y;
+        /* 方向向量 */
+        const dx  = tx - c.x,
+              dy  = ty - c.y;
         const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len, uy = dy / len;
+        const ux  = dx / len,
+              uy  = dy / len;
 
         /* 建立 feed */
         const f = new FeedClass();
-        f.size = EJECT_SIZE;
-        f.x    = c.x + ux * (c.size + f.size + EJECT_OFFSET);
-        f.y    = c.y + uy * (c.size + f.size + EJECT_OFFSET);
-        f.vx   = ux * EJECT_SPEED;
-        f.vy   = uy * EJECT_SPEED;
+        f.size  = EJECT_SIZE;
+        f.x     = c.x + ux * (c.size + f.size + EJECT_OFFSET);
+        f.y     = c.y + uy * (c.size + f.size + EJECT_OFFSET);
+        f.vx    = ux * EJECT_SPEED;
+        f.vy    = uy * EJECT_SPEED;
+        f.color = this.color;          // ← 與玩家同色
         feeds.push(f);
 
         /* 扣除質量 */
-        const newArea = Math.max(c.area - f.size * f.size, MIN_CELL_SIZE * MIN_CELL_SIZE);
+        const newArea = Math.max(
+          c.area - f.size * f.size,
+          MIN_CELL_SIZE * MIN_CELL_SIZE
+        );
         c.size = Math.sqrt(newArea);
       }
     }
     return feeds;
   }
 
-  /* ---------- 合併邏輯 ---------- */
+  /* ---------- 同玩家細胞合併 ---------- */
   _merge() {
     if (this.cells.length <= 1) return;
 
     const pairs = [];
     for (let i = 0; i < this.cells.length; i++) {
       for (let j = i + 1; j < this.cells.length; j++) {
-        const a = this.cells[i], b = this.cells[j];
+        const a = this.cells[i],
+              b = this.cells[j];
         if (a.mergeClock || b.mergeClock) continue;
 
-        const dx = b.x - a.x, dy = b.y - a.y;
+        const dx = b.x - a.x,
+              dy = b.y - a.y;
         const d  = Math.hypot(dx, dy);
         if (d >= a.size + b.size) continue;
 
@@ -207,6 +235,7 @@ class Player {
       }
     }
 
+    /* 由最近開始合併，避免鏈式衝突 */
     pairs.sort((p, q) => p.d - q.d);
     const used = new Set();
     for (const { a, b } of pairs) {
