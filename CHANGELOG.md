@@ -13,6 +13,60 @@
 - 
 
 
+## [0.6.0] – 2025-06-16
+### 新增
+- **投餵機制（W）**  
+  - 玩家可按 **W** 沿滑鼠方向噴出小球（eject）；產生的投餵球具有動量並逐漸減速  
+  - `Player` 新增 `_ejectQ`／`requestEject()`／`popEjectedFeeds()`；伺服器於每 tick 轉成可移動 `Feed`  
+  - `config/index.js` 新增  
+    - `EJECT_SIZE`、`EJECT_SPEED`、`EJECT_FRICTION`、`EJECT_OFFSET` 四個參數  
+
+- **可移動 Feed 與增量同步**  
+  - `Feed` 物件新增 `vx` / `vy`；`gameLoop` 每 tick 更新位置與摩擦阻尼  
+  - `update` 封包新增 `feedsMoved`，僅傳實際移動之 feed，節省頻寬  
+
+- **玩家個人化**  
+  - `Player` 增加 `name` 屬性與 `setProfile()`，可動態修改名稱 / 顏色  
+  - `socketHandler` 新增  
+    - `setProfile`（client→server）  
+    - `profileUpdated`（server→all）立即同步其他玩家  
+  - 前端加入入場選單：暱稱、顏色調色盤、顯示選項（格線 / 名稱 / 質量）  
+
+- **Leaderboard**  
+  - 右上角固定寬度排行榜，顯示 TOP 10 質量，自己的名字以黃色凸顯  
+
+- **自然質量衰減**  
+  - `DECAY_RATE`（0.2 %／s）防止過大玩家無限膨脹  
+  - `MIN_CELL_SIZE` 保障最小半徑，避免因衰減或投餵出現負值  
+
+### 變更
+- **合併／吞噬規則調整**  
+  - `MERGE_COOLDOWN` 改為「秒」；在程式內轉換為 `ms` 倒數  
+  - `MERGE_OVERLAP_RATIO`、`EAT_OVERLAP_RATIO` 由 **0.5 → 0.7**，降低誤吃機率  
+  - `SPLIT_BOOST` 下修為 **15**，分裂衝刺較易控  
+
+- **Socket 封包**  
+  - `update` 新增 `feedsMoved`；如同一 id 同時出現在 `feedsRemoved`，將被過濾避免前端殘影  
+  - `players` 物件新增 `name` 欄位  
+
+- **伺服器邏輯**  
+  - `gameLoop` 新增 `STOP_EPS`，速度低於 0.01 視為靜止  
+  - `MAX_FEED_SIZE = max(FEED_SIZE, EJECT_SIZE)`，確保碰撞半徑正確  
+
+### 修復
+- **同 tick 移動＋刪除殘影**  
+  - 廣播前以 `removedSet` 過濾 `added` / `moved`，杜絕前端幽靈小球  
+
+- **名稱／顏色更新延遲**  
+  - 即時 `profileUpdated` 廣播，前端立刻刷新  
+
+- **投餵球長時間低速漂移**  
+  - 當速度低於閾值即歸零，避免無限抖動  
+
+- **極端投餵導致負半徑**  
+  - 引入 `MIN_CELL_SIZE` 下限，確保計算安全  
+
+
 ## [0.5.0] – 2025-06-14
 ### 新增
 - **顏色系統**  
@@ -38,7 +92,7 @@
 ### 新增
 - **多細胞分裂／合併系統**  
   - 玩家可按 `Space` 沿滑鼠方向瞬間分裂；最多 **16** 顆細胞  
-  - 分裂後 **1 s** 冷卻，兩顆細胞互相覆蓋面積 ≥ 50 % 時自動融合  
+  - 分裂後 **15 s (可自訂)** 冷卻，兩顆細胞互相覆蓋面積 ≥ 50 % (可自訂) 時自動融合  
 - **質量-速度衰減模型**：細胞半徑越大移動越慢，速度 ≈ `size^-0.5`，並設最小 15 % 下限  
 - **固定尺寸 Spatial Hash Grid**  
   - `GRID_CELL_SIZE = 50 px`，使用 `Map<string, Set>`；插入／移除 O(1)，不再因巨大玩家而重建  
