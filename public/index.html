@@ -56,7 +56,6 @@
       <div id="palette" class="palette"></div>
     </div>
 
-    <label><input id="chkDark" type="checkbox" checked> Dark Mode</label>
     <label><input id="chkGrid" type="checkbox" checked> Show Grid</label>
     <label><input id="chkName" type="checkbox" checked> Show Name</label>
     <label><input id="chkMass" type="checkbox" checked> Show Mass</label>
@@ -76,7 +75,7 @@ const DEFAULT_COLORS=[
 ];
 const settings={
   darkMode:true,showGrid:true,showName:true,showMass:true,
-  playerName:'',playerColor:null   // ← 不預設顏色
+  playerName:'',playerColor:null          // ← 不預設顏色
 };
 /* palette UI */
 const palEl=document.getElementById('palette');
@@ -98,11 +97,12 @@ function selectColor(c,el){
  * ==========================================================================*/
 const menu=document.getElementById('menu'),btnPlay=document.getElementById('btnPlay');
 const inpName=document.getElementById('playerName');
-['Dark','Grid','Name','Mass'].forEach(k=>{
-  document.getElementById(`chk${k}`).onchange=e=>settings[`show${k}`]=e.target.checked;
+['Grid','Name','Mass'].forEach(k=>{
+  document.getElementById(`chk${k}`).onchange =
+    e => settings[`show${k}`] = e.target.checked;
 });
 btnPlay.onclick=()=>{
-  settings.playerName=inpName.value.trim();  // 空字串代表未輸入
+  settings.playerName=inpName.value.trim();        // 空字串代表未輸入
   menu.style.display='none';
   startGame();
 };
@@ -150,6 +150,81 @@ addEventListener('keydown',e=>{
 const smoothR=new Map(),lastInfo=new Map(),fading=new Map();
 /* camera */
 let camX=0,camY=0,zoom=BASE_SCALE,prev=performance.now();
+
+/* ===================================================================
+ *  Leaderboard utilities (固定寬度版)
+ * =================================================================*/
+const LB_TITLE_SIZE = 24;  // px
+const LB_LINE_SIZE  = 18;  // px
+const LB_PADDING    = 10;  // px 內邊距
+const LB_MARGIN     = 10;  // px 與邊緣距
+const LB_MAX_LINES  = 10;  // 顯示前 N 名
+const LB_WIDTH      = 240; // px 固定寬度
+
+/** 計算排序後前 N 名 */
+function getLeaderboard(limit = LB_MAX_LINES){
+  return Object.values(players)
+    .map(p=>{
+      const mass=p.cells.reduce((t,c)=>t+c.size*c.size,0);
+      return {id:p.id,name:p.name,mass};
+    })
+    .sort((a,b)=>b.mass-a.mass)
+    .slice(0,limit);
+}
+
+/**
+ * 將文字裁切至指定寬度
+ * - 因 Leaderboard 寬度固定，過長名稱需截斷。
+ */
+function fitText(text,maxWidth,font){
+  ctx.font=font;
+  if(ctx.measureText(text).width<=maxWidth) return text;
+  while(text.length>2 && ctx.measureText(text+'…').width>maxWidth){
+    text=text.slice(0,-1);
+  }
+  return text+'…';
+}
+
+/** 在螢幕座標系繪製 Leaderboard（未縮放狀態） */
+function drawLeaderboard(){
+  const list=getLeaderboard();
+  if(!list.length) return;
+
+  const boxW=LB_WIDTH;
+  const boxH=LB_TITLE_SIZE + LB_PADDING*1.5 + list.length*LB_LINE_SIZE;
+  const x0=cv.width - boxW - LB_MARGIN;
+  const y0=LB_MARGIN;
+
+  /* 背景 */
+  ctx.fillStyle=settings.darkMode
+    ? 'rgba(0,0,0,0.55)'
+    : 'rgba(255,255,255,0.55)';
+  ctx.fillRect(x0,y0,boxW,boxH);
+
+  /* ====== 1. 標題（改為置中） ====== */
+  ctx.textBaseline='top';
+  ctx.textAlign='center';              // ← 由 left 改為 center
+  ctx.fillStyle=settings.darkMode?'#fff':'#111';
+  ctx.font=`${LB_TITLE_SIZE}px Arial`;
+  ctx.fillText('Leaderboard', x0 + boxW / 2, y0 + LB_PADDING);
+
+  /* ====== 2. 名單 ====== */
+  ctx.textAlign='left';                // ← 畫名單前切回 left
+  ctx.font=`${LB_LINE_SIZE}px Arial`;
+  const textMaxW = boxW - LB_PADDING*2;
+  list.forEach((e,i)=>{
+    ctx.fillStyle = (e.id===myId) ? '#ffeb3b'
+                 : (settings.darkMode?'#fff':'#111');
+    const name=fitText(`${i+1}. ${e.name}`, textMaxW, `${LB_LINE_SIZE}px Arial`);
+    ctx.fillText(
+      name,
+      x0+LB_PADDING,
+      y0+LB_PADDING*1.5 + LB_TITLE_SIZE + i*LB_LINE_SIZE
+    );
+  });
+}
+
+/* ========================== Game Loop =========================== */
 requestAnimationFrame(function loop(now){
   const dt=now-prev;prev=now;const me=players[myId];
   /* camera */
@@ -158,84 +233,122 @@ requestAnimationFrame(function loop(now){
     me.cells.forEach(c=>{const a=c.size*c.size;area+=a;cx+=c.x*a;cy+=c.y*a;});
     if(area){camX=cx/area;camY=cy/area;}
     const half=WORLD_SIZE/2,vw=cv.width/(2*zoom),vh=cv.height/(2*zoom);
-    camX=Math.min(half-vw,Math.max(-half+vw,camX));camY=Math.min(half-vh,Math.max(-half+vh,camY));
+    camX=Math.min(half-vw,Math.max(-half+vw,camX));
+    camY=Math.min(half-vh,Math.max(-half+vh,camY));
     const targetZ=BASE_SCALE*Math.sqrt(20/Math.sqrt(area));
     zoom+=(Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,targetZ))-zoom)*0.08;
-    socket.emit('moveTo',{mx:camX+(mouseX-cv.width/2)/zoom,my:camY+(mouseY-cv.height/2)/zoom});
+    socket.emit('moveTo',{
+      mx:camX+(mouseX-cv.width/2)/zoom,
+      my:camY+(mouseY-cv.height/2)/zoom
+    });
   }
-  /* background */
-  ctx.fillStyle=settings.darkMode?'#111':'#fafafa';ctx.fillRect(0,0,cv.width,cv.height);
+
+  /* 背景 */
+  ctx.fillStyle=settings.darkMode?'#111':'#fafafa';
+  ctx.fillRect(0,0,cv.width,cv.height);
+
+  /* 世界座標系 */
   ctx.save();
-  ctx.translate(cv.width/2,cv.height/2);ctx.scale(zoom,zoom);ctx.translate(-camX,-camY);
+  ctx.translate(cv.width/2,cv.height/2);
+  ctx.scale(zoom,zoom);
+  ctx.translate(-camX,-camY);
+
   /* grid */
   if(settings.showGrid){
-    ctx.strokeStyle=settings.darkMode?'#444':'#ccc';ctx.lineWidth=1/zoom;
-    for(let x=-WORLD_SIZE/2;x<=WORLD_SIZE/2;x+=GRID_SIZE){ctx.beginPath();ctx.moveTo(x,-WORLD_SIZE/2);ctx.lineTo(x,WORLD_SIZE/2);ctx.stroke();}
-    for(let y=-WORLD_SIZE/2;y<=WORLD_SIZE/2;y+=GRID_SIZE){ctx.beginPath();ctx.moveTo(-WORLD_SIZE/2,y);ctx.lineTo(WORLD_SIZE/2,y);ctx.stroke();}
+    ctx.strokeStyle=settings.darkMode?'#444':'#ccc';
+    ctx.lineWidth=1/zoom;
+    for(let x=-WORLD_SIZE/2;x<=WORLD_SIZE/2;x+=GRID_SIZE){
+      ctx.beginPath();ctx.moveTo(x,-WORLD_SIZE/2);ctx.lineTo(x,WORLD_SIZE/2);ctx.stroke();
+    }
+    for(let y=-WORLD_SIZE/2;y<=WORLD_SIZE/2;y+=GRID_SIZE){
+      ctx.beginPath();ctx.moveTo(-WORLD_SIZE/2,y);ctx.lineTo(WORLD_SIZE/2,y);ctx.stroke();
+    }
   }
+
   /* feeds */
   if(me){
     const pad=100,minX=camX-(cv.width/2+pad)/zoom,maxX=camX+(cv.width/2+pad)/zoom;
     const minY=camY-(cv.height/2+pad)/zoom,maxY=camY+(cv.height/2+pad)/zoom;
-    feeds.forEach(f=>{if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY)return;
-      ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);ctx.fillStyle=f.color||'#88cc88';ctx.fill();});
+    feeds.forEach(f=>{
+      if(f.x<minX||f.x>maxX||f.y<minY||f.y>maxY) return;
+      ctx.beginPath();ctx.arc(f.x,f.y,f.size,0,Math.PI*2);
+      ctx.fillStyle=f.color||'#88cc88';ctx.fill();
+    });
   }
+
   /* cells */
-  const cells=[];for(const pid in players){const p=players[pid];
-    p.cells.forEach(c=>cells.push({c,p}));}
+  const cells=[];
+  for(const pid in players){
+    const p=players[pid];
+    p.cells.forEach(c=>cells.push({c,p}));
+  }
   cells.sort((a,b)=>a.c.size-b.c.size);
   const present=new Set();
   cells.forEach(({c,p})=>{
-    /* 半徑緩動 */
-    const rPrev=smoothR.get(c.id)||c.size,r=rPrev+(c.size-rPrev)*0.05;
-    smoothR.set(c.id,r);lastInfo.set(c.id,{x:c.x,y:c.y,color:p.color});present.add(c.id);
+    /* 半徑平滑 */
+    const rPrev=smoothR.get(c.id)||c.size,
+          r    =rPrev+(c.size-rPrev)*0.05;
+    smoothR.set(c.id,r);
+    lastInfo.set(c.id,{x:c.x,y:c.y,color:p.color});
+    present.add(c.id);
 
-    /* 細胞圓 */
-    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();
+    /* cell */
+    ctx.beginPath();ctx.arc(c.x,c.y,r,0,Math.PI*2);
+    ctx.fillStyle=p.color;ctx.fill();
 
-    /* 文字顏色 */
-    ctx.fillStyle=settings.darkMode?'#eee':'#222';ctx.textAlign='center';ctx.textBaseline='alphabetic';
-
-    /* 動態字體大小 */
-    const fs=Math.min(r*0.6,24);           // name font-size
-    const ms=Math.min(r*0.5,20);           // mass font-size
-    const gap=2/zoom;                      // 微調間距
-
-    /* 計算總高度後垂直置中 */
-    const totalH=(settings.showName?fs/zoom:0) + (settings.showMass? (gap + ms/zoom):0);
-    let nameY=c.y - totalH/2 + fs/zoom;
-
-    /* 名稱 */
+    /* name / mass */
+    ctx.fillStyle=settings.darkMode?'#eee':'#222';
+    ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    const fs=Math.min(r*0.6,24),
+          ms=Math.min(r*0.5,20),
+          gap=2/zoom;
+    const totalH=(settings.showName?fs/zoom:0)+(settings.showMass?(gap+ms/zoom):0);
+    let nameY=c.y-totalH/2+fs/zoom;
     if(settings.showName){
       ctx.font=`${fs/zoom}px Arial`;
       ctx.fillText(p.name,c.x,nameY);
     }
-
-    /* 質量 */
     if(settings.showMass){
       ctx.font=`${ms/zoom}px Arial`;
-      const massY=nameY + (settings.showName? (gap + ms/zoom):0);
+      const massY=nameY+(settings.showName?(gap+ms/zoom):0);
       ctx.fillText(Math.floor(c.size*c.size),c.x,massY);
     }
   });
-  /* fading */
-  smoothR.forEach((_,id)=>{if(!present.has(id)&&!fading.has(id)){
-    const info=lastInfo.get(id);fading.set(id,{...info,r:smoothR.get(id),t:FADE});
-    smoothR.delete(id);lastInfo.delete(id);}});
-  fading.forEach((o,id)=>{o.t-=dt;if(o.t<=0){fading.delete(id);return;}
-    const a=o.t/FADE;ctx.globalAlpha=a;ctx.beginPath();ctx.arc(o.x,o.y,o.r*a,0,Math.PI*2);
-    ctx.fillStyle=o.color;ctx.fill();ctx.globalAlpha=1;});
+
+  /* 消滅淡出 */
+  smoothR.forEach((_,id)=>{
+    if(!present.has(id)&&!fading.has(id)){
+      const info=lastInfo.get(id);
+      fading.set(id,{...info,r:smoothR.get(id),t:FADE});
+      smoothR.delete(id);lastInfo.delete(id);
+    }
+  });
+  fading.forEach((o,id)=>{
+    o.t-=dt;
+    if(o.t<=0){fading.delete(id);return;}
+    const a=o.t/FADE;
+    ctx.globalAlpha=a;
+    ctx.beginPath();ctx.arc(o.x,o.y,o.r*a,0,Math.PI*2);
+    ctx.fillStyle=o.color;ctx.fill();ctx.globalAlpha=1;
+  });
+
+  /* 離開世界座標系 */
   ctx.restore();
-  /* score */
+
+  /* 分數顯示 */
   if(me){
     let score=0;me.cells.forEach(c=>score+=c.size*c.size);
-    ctx.fillStyle=settings.darkMode?'#eee':'#222';ctx.font='16px Arial';
-    ctx.textAlign='left';ctx.textBaseline='bottom';
+    ctx.fillStyle=settings.darkMode?'#eee':'#222';
+    ctx.font='16px Arial';ctx.textAlign='left';ctx.textBaseline='bottom';
     ctx.fillText(`Score : ${Math.floor(score)}`,12,cv.height-12);
   }
+
+  /* Leaderboard (固定寬度) */
+  drawLeaderboard();
+
   requestAnimationFrame(loop);
 });
-}
+}   // end of startGame()
 </script>
 </body>
 </html>
