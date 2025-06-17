@@ -203,13 +203,13 @@ function drawLeaderboard(){
 
   /* ====== 1. 標題（改為置中） ====== */
   ctx.textBaseline='top';
-  ctx.textAlign='center';              // ← 由 left 改為 center
+  ctx.textAlign='center';
   ctx.fillStyle=settings.darkMode?'#fff':'#111';
   ctx.font=`${LB_TITLE_SIZE}px Arial`;
   ctx.fillText('Leaderboard', x0 + boxW / 2, y0 + LB_PADDING);
 
   /* ====== 2. 名單 ====== */
-  ctx.textAlign='left';                // ← 畫名單前切回 left
+  ctx.textAlign='left';
   ctx.font=`${LB_LINE_SIZE}px Arial`;
   const textMaxW = boxW - LB_PADDING*2;
   list.forEach((e,i)=>{
@@ -348,7 +348,7 @@ requestAnimationFrame(function loop(now){
 
   requestAnimationFrame(loop);
 });
-}   // end of startGame()
+}
 </script>
 </body>
 </html>

@@ -55,7 +55,7 @@ node server.js  # 或 PORT=8080 node server.js
 ### 介面
 
 * 右上角：Leaderboard（前 10 名，自己高亮）  
-* 右下角：當前分數（質量總和）  
+* 左下角：當前分數（質量總和）  
 * 遊戲外框以世界大小 (`WORLD_SIZE`) 為界，鏡頭自動阻擋超出部份  
 
 ---

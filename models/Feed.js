@@ -19,7 +19,7 @@ class Feed {
   constructor() {
     this.id = nextId++;
     this.reset();
-    this.vx = 0;   // 🔸 投餵用動量；一般靜止 feed 皆為 0
+    this.vx = 0;   // 投餵用動量；一般靜止 feed 皆為 0
     this.vy = 0;
   }
 

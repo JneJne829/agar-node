@@ -4,7 +4,7 @@ function cellEatsFeed(cell, feed) {
   const dx = feed.x - cell.x;
   const dy = feed.y - cell.y;
   const r  = cell.size + feed.size;
-  return dx * dx + dy * dy < r * r;  // 省掉 sqrt
+  return dx * dx + dy * dy < r * r;
 }
 
 module.exports = { cellEatsFeed };
